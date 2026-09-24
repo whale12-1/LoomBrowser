@@ -1,0 +1,64 @@
+# ============================================================
+#  Visual Studio & MSVC
+# ============================================================
+.vs/
+*.user
+*.aps
+*.VC.db
+*.opendb
+*.sdf
+*.suo
+*.user
+*.userosv
+*.sln.docstates
+
+# ============================================================
+#  CMake & Build Directories
+# ============================================================
+build/
+out/
+cmake-build-debug/
+cmake-build-release/
+bin/
+obj/
+
+# CMake сгенерированные файлы
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+Makefile
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+
+# ============================================================
+#  C++ Compilers / Intermediate Files
+# ============================================================
+*.obj
+*.o
+*.lib
+*.a
+*.exp
+*.pch
+*.idb
+*.pdb
+*.ilk
+*.exe
+*.dll
+*.so
+*.dylib
+
+# ============================================================
+#  Qt / MOC / UI / RCC (если используется Qt/QSS)
+# ============================================================
+*.pro.user
+.qmake.stash
+moc_*.cpp
+qrc_*.cpp
+ui_*.h
+
+# ============================================================
+#  Package Managers & Logs
+# ============================================================
+vcpkg_installed/
+*.log
