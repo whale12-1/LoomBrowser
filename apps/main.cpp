@@ -1,374 +1,386 @@
-#include <iostream>
+п»ї#include <iostream>
 #include <cassert>
+#include <cmath>              // в†ђ РґРѕР±Р°РІРёР»Рё
 #include <string_view>
 #include <unordered_map>
 #include <vector>
 
-#include "headers/dom.h"
-#include "headers/css_dom.h"
-#include "layout/style_tree_builder.h"
+#include "parsers/html_parser/headers/dom.h"
+#include "parsers/css_parser/headers/css_dom.h"
+#include "parsers/selector_matcher/style_tree_builder.h"
 
-static DOMNode* create_element(const std::string& tag, DOMNode* parent = nullptr) {
-    DOMNode* node = new DOMNode();
-    node->type = NodeType::Element;
-    node->tag_name = tag;
-    node->parent = parent;
-    if (parent) {
-        parent->children.push_back(node);
-    }
-    return node;
-}
-
-static void set_id(DOMNode* node, const std::string& id) {
-    node->attributes["id"] = id;
-}
-
-static void set_class(DOMNode* node, const std::string& cls) {
-    node->attributes["class"] = cls;
-}
-
-static void set_attr(DOMNode* node, const std::string& key, const std::string& val) {
-    node->attributes[key] = val;
-}
-
-static void destroy_tree(DOMNode* node) {
-    if (!node) return;
-    for (DOMNode* child : node->children) {
-        destroy_tree(child);
-    }
-    delete node;
-}
+#include "layout/headers/layout_node.h"
+#include "layout/headers/layout_tree_builder.h"
 
 // ============================================================
-//  1. Тесты Combinators & Pseudo-classes (SelectorMatcher)
+//  5. Layout: Р±Р°Р·РѕРІР°СЏ Р±Р»РѕС‡РЅР°СЏ СЂР°СЃРєР»Р°РґРєР°
 // ============================================================
-void test_selector_matching() {
-    std::cout << "[RUN] Testing SelectorMatcher & Combinators...\n";
+void test_layout_basic_block() {
+    std::cout << "[RUN] Testing LayoutTreeBuilder basic block layout...\n";
 
-    // Иерархия:
-    // <html id="root">
-    //   <body class="main-body">
-    //     <div id="wrapper">
-    //       <p class="text active" id="p1"></p>
-    //       <p class="text" id="p2"></p>
-    //       <span class="text" id="s1"></span>
-    //       <a href="https://example.com" id="a1">Link</a>
-    //     </div>
-    //   </body>
-    // </html>
-    DOMNode* html = create_element("html");
-    set_id(html, "root");
+    // <html><body><div/></body></html>
+    DOMNode* html = new DOMNode();
+    html->type = NodeType::Element;
+    html->tag_name = "html";
 
-    DOMNode* body = create_element("body", html);
-    set_class(body, "main-body");
+    DOMNode* body = new DOMNode();
+    body->type = NodeType::Element;
+    body->tag_name = "body";
+    body->parent = html;
+    html->children.push_back(body);
 
-    DOMNode* wrapper = create_element("div", body);
-    set_id(wrapper, "wrapper");
-
-    DOMNode* p1 = create_element("p", wrapper);
-    set_class(p1, "text active");
-    set_id(p1, "p1");
-
-    DOMNode* p2 = create_element("p", wrapper);
-    set_class(p2, "text");
-    set_id(p2, "p2");
-
-    DOMNode* s1 = create_element("span", wrapper);
-    set_class(s1, "text");
-    set_id(s1, "s1");
-
-    DOMNode* a1 = create_element("a", wrapper);
-    set_attr(a1, "href", "https://example.com");
-    set_id(a1, "a1");
-
-    // 1. Descendant ( ) & Child (>)
-    {
-        ComplexSelector cs;
-        // html #wrapper p.active
-        CompoundSelector c1, c2, c3;
-        c1.parts.push_back({ SimpleSelector::Kind::Tag, "html" });
-
-        c2.combinator = Combinator::Descendant;
-        c2.parts.push_back({ SimpleSelector::Kind::Id, "wrapper" });
-
-        c3.combinator = Combinator::Child;
-        c3.parts.push_back({ SimpleSelector::Kind::Tag, "p" });
-        c3.parts.push_back({ SimpleSelector::Kind::Class, "active" });
-
-        cs.compounds = { c1, c2, c3 };
-
-        assert(SelectorMatcher::match_complex(p1, cs) == true);
-        assert(SelectorMatcher::match_complex(p2, cs) == false);
-    }
-
-    // 2. Adjacent Sibling (+) & General Sibling (~)
-    {
-        // p + p
-        ComplexSelector cs_adj;
-        CompoundSelector c1, c2;
-        c1.parts.push_back({ SimpleSelector::Kind::Tag, "p" });
-        c2.combinator = Combinator::AdjacentSibling;
-        c2.parts.push_back({ SimpleSelector::Kind::Tag, "p" });
-        cs_adj.compounds = { c1, c2 };
-
-        assert(SelectorMatcher::match_complex(p2, cs_adj) == true);
-        assert(SelectorMatcher::match_complex(p1, cs_adj) == false);
-
-        // p ~ span
-        ComplexSelector cs_gen;
-        CompoundSelector g1, g2;
-        g1.parts.push_back({ SimpleSelector::Kind::Tag, "p" });
-        g2.combinator = Combinator::GeneralSibling;
-        g2.parts.push_back({ SimpleSelector::Kind::Tag, "span" });
-        cs_gen.compounds = { g1, g2 };
-
-        assert(SelectorMatcher::match_complex(s1, cs_gen) == true);
-    }
-
-    // 3. Pseudo-classes (:nth-child, :first-of-type, :not, :any-link)
-    {
-        // :nth-child(2n+1) -> odd -> 1st child (p1) и 3rd child (s1)
-        ComplexSelector cs_nth;
-        CompoundSelector c;
-        SimpleSelector ps;
-        ps.kind = SimpleSelector::Kind::PseudoClass;
-        ps.name = "nth-child";
-        ps.arg = "2n+1";
-        c.parts.push_back(ps);
-        cs_nth.compounds = { c };
-
-        assert(SelectorMatcher::match_complex(p1, cs_nth) == true);  // 1st child
-        assert(SelectorMatcher::match_complex(p2, cs_nth) == false); // 2nd child
-        assert(SelectorMatcher::match_complex(s1, cs_nth) == true);  // 3rd child
-
-        // :first-of-type для span (s1 — первый span, хоть и 3-й ребёнок)
-        ComplexSelector cs_fot;
-        CompoundSelector c_fot;
-        SimpleSelector ps_fot;
-        ps_fot.kind = SimpleSelector::Kind::PseudoClass;
-        ps_fot.name = "first-of-type";
-        c_fot.parts.push_back(ps_fot);
-        cs_fot.compounds = { c_fot };
-
-        assert(SelectorMatcher::match_complex(s1, cs_fot) == true);
-
-        // :not(.active)
-        ComplexSelector cs_not;
-        CompoundSelector c_not;
-        SimpleSelector ps_not;
-        ps_not.kind = SimpleSelector::Kind::PseudoClass;
-        ps_not.name = "not";
-        ps_not.arg = ".active";
-        c_not.parts.push_back(ps_not);
-        cs_not.compounds = { c_not };
-
-        assert(SelectorMatcher::match_complex(p2, cs_not) == true);
-        assert(SelectorMatcher::match_complex(p1, cs_not) == false);
-
-        // :any-link
-        ComplexSelector cs_link;
-        CompoundSelector c_link;
-        SimpleSelector ps_link;
-        ps_link.kind = SimpleSelector::Kind::PseudoClass;
-        ps_link.name = "any-link";
-        c_link.parts.push_back(ps_link);
-        cs_link.compounds = { c_link };
-
-        assert(SelectorMatcher::match_complex(a1, cs_link) == true);
-        assert(SelectorMatcher::match_complex(p1, cs_link) == false);
-    }
-
-    destroy_tree(html);
-    std::cout << "  [OK] SelectorMatcher & Combinators tests passed!\n";
-}
-
-// ============================================================
-//  2. Тесты Specificity, Cascade & !important
-// ============================================================
-void test_cascade_and_specificity() {
-    std::cout << "[RUN] Testing Cascade, Specificity & !important...\n";
-
-    DOMNode* root = create_element("div");
-    set_id(root, "main");
-    set_class(root, "box primary");
+    DOMNode* div = new DOMNode();
+    div->type = NodeType::Element;
+    div->tag_name = "div";
+    div->parent = body;
+    body->children.push_back(div);
 
     StyleSheet sheet;
-
-    // Rule 1: .box { color: red; } -> (0, 1, 0)
-    CSSRule r1;
-    ComplexSelector s1;
-    CompoundSelector c1;
-    c1.parts.push_back({ SimpleSelector::Kind::Class, "box" });
-    s1.compounds = { c1 };
-    r1.selectors = { s1 };
-    r1.declarations.push_back({ "color", "red", false });
-    sheet.rules.push_back(r1);
-
-    // Rule 2: #main { color: blue; } -> (1, 0, 0)
-    CSSRule r2;
-    ComplexSelector s2;
-    CompoundSelector c2;
-    c2.parts.push_back({ SimpleSelector::Kind::Id, "main" });
-    s2.compounds = { c2 };
-    r2.selectors = { s2 };
-    r2.declarations.push_back({ "color", "blue", false });
-    sheet.rules.push_back(r2);
-
-    // Rule 3: .primary { color: yellow !important; } -> перебивает #main из-за !important
-    CSSRule r3;
-    ComplexSelector s3;
-    CompoundSelector c3;
-    c3.parts.push_back({ SimpleSelector::Kind::Class, "primary" });
-    s3.compounds = { c3 };
-    r3.selectors = { s3 };
-    r3.declarations.push_back({ "color", "yellow", true });
-    sheet.rules.push_back(r3);
-
-    StyleStorageSoA storage = StyleTreeBuilder::build(root, sheet);
-
-    // Ожидаем yellow (0xFFFF00FF)
-    uint32_t expected_yellow = style::Color{ 255, 255, 0, 255 }.pack();
-    assert(storage.text_colors[0] == expected_yellow);
-
-    destroy_tree(root);
-    std::cout << "  [OK] Cascade & Specificity tests passed!\n";
-}
-
-// ============================================================
-//  3. Тесты Inheritance & Unit Resolution (rem / em)
-// ============================================================
-void test_inheritance_and_units() {
-    std::cout << "[RUN] Testing Inheritance & Unit Resolution (rem/em)...\n";
-
-    DOMNode* html = create_element("html");
-    DOMNode* body = create_element("body", html);
-    DOMNode* div = create_element("div", body);
-    DOMNode* p = create_element("p", div);
-
-    StyleSheet sheet;
-
-    // html { font-size: 20px; color: green; }
-    CSSRule r_html;
-    ComplexSelector s_html; CompoundSelector c_html;
-    c_html.parts.push_back({ SimpleSelector::Kind::Tag, "html" });
-    s_html.compounds = { c_html };
-    r_html.selectors = { s_html };
-    r_html.declarations.push_back({ "font-size", "20px", false });
-    r_html.declarations.push_back({ "color", "green", false });
-    sheet.rules.push_back(r_html);
-
-    // body { font-size: 1.5rem; } -> 1.5 * 20px (root font-size) = 30px
-    CSSRule r_body;
-    ComplexSelector s_body; CompoundSelector c_body;
-    c_body.parts.push_back({ SimpleSelector::Kind::Tag, "body" });
-    s_body.compounds = { c_body };
-    r_body.selectors = { s_body };
-    r_body.declarations.push_back({ "font-size", "1.5rem", false });
-    sheet.rules.push_back(r_body);
-
-    // div { font-size: 2em; } -> 2 * 30px (parent body font-size) = 60px
-    CSSRule r_div;
-    ComplexSelector s_div; CompoundSelector c_div;
-    c_div.parts.push_back({ SimpleSelector::Kind::Tag, "div" });
-    s_div.compounds = { c_div };
-    r_div.selectors = { s_div };
-    r_div.declarations.push_back({ "font-size", "2em", false });
-    sheet.rules.push_back(r_div);
+    {
+        CSSRule r; ComplexSelector s; CompoundSelector c;
+        c.parts.push_back({ SimpleSelector::Kind::Tag, "html" });
+        s.compounds = { c }; r.selectors = { s };
+        r.declarations.push_back({ "display", "block", false });
+        sheet.rules.push_back(std::move(r));
+    }
+    {
+        CSSRule r; ComplexSelector s; CompoundSelector c;
+        c.parts.push_back({ SimpleSelector::Kind::Tag, "body" });
+        s.compounds = { c }; r.selectors = { s };
+        r.declarations.push_back({ "display", "block", false });
+        sheet.rules.push_back(std::move(r));
+    }
+    {
+        CSSRule r; ComplexSelector s; CompoundSelector c;
+        c.parts.push_back({ SimpleSelector::Kind::Tag, "div" });
+        s.compounds = { c }; r.selectors = { s };
+        r.declarations.push_back({ "display", "block", false });
+        r.declarations.push_back({ "width",   "200px", false });
+        r.declarations.push_back({ "height",  "100px", false });
+        sheet.rules.push_back(std::move(r));
+    }
 
     StyleStorageSoA storage = StyleTreeBuilder::build(html, sheet);
+    auto layout = LayoutTreeBuilder::build(storage);
+    LayoutTreeBuilder::compute_layout(layout.get(), 1024.0f, storage);
 
-    uint32_t html_idx = 0;
-    uint32_t body_idx = storage.first_child_indices[html_idx];
-    uint32_t div_idx = storage.first_child_indices[body_idx];
-    uint32_t p_idx = storage.first_child_indices[div_idx];
+    assert(layout);
+    assert(layout->type == BoxType::Block);
+    assert(layout->children.size() == 1);
 
-    // Проверка font-size
-    assert(storage.font_sizes[html_idx] == 20.0f);
-    assert(storage.font_sizes[body_idx] == 30.0f);
-    assert(storage.font_sizes[div_idx] == 60.0f);
-    assert(storage.font_sizes[p_idx] == 60.0f); // Унаследовано от div
+    LayoutNode* Lbody = layout->children[0].get();
+    assert(Lbody->type == BoxType::Block);
+    assert(Lbody->children.size() == 1);
 
-    // Проверка наследования цвета (green)
-    uint32_t expected_green = style::Color{ 0, 128, 0, 255 }.pack();
-    assert(storage.text_colors[p_idx] == expected_green);
+    LayoutNode* Ldiv = Lbody->children[0].get();
+    assert(Ldiv->type == BoxType::Block);
 
-    destroy_tree(html);
-    std::cout << "  [OK] Inheritance & Units tests passed!\n";
+    assert(std::abs(layout->geometry.width - 1024.0f) < 0.01f);
+    assert(std::abs(layout->geometry.height - 100.0f) < 0.01f);
+    assert(std::abs(Lbody->geometry.width - 1024.0f) < 0.01f);
+    assert(std::abs(Lbody->geometry.height - 100.0f) < 0.01f);
+
+    assert(std::abs(Ldiv->geometry.width - 200.0f) < 0.01f);
+    assert(std::abs(Ldiv->geometry.height - 100.0f) < 0.01f);
+    assert(std::abs(Ldiv->geometry.x) < 0.01f);
+    assert(std::abs(Ldiv->geometry.y) < 0.01f);
+
+    delete html; delete body; delete div;
+    std::cout << "  [OK] Layout basic block passed!\n";
 }
 
 // ============================================================
-//  4. Тесты StyleRuleIndex (Buckets & Collect по индексам)
+//  6. Layout: РІРµСЂС‚РёРєР°Р»СЊРЅС‹Р№ СЃС‚РµРє СЃ margin'Р°РјРё
 // ============================================================
-void test_rule_index_buckets() {
-    std::cout << "[RUN] Testing StyleRuleIndex Buckets & Re-build...\n";
+void test_layout_vertical_stack() {
+    std::cout << "[RUN] Testing LayoutTreeBuilder vertical stack...\n";
 
-    DOMNode* node = create_element("button");
-    set_id(node, "btn-id");
-    set_class(node, "btn primary");
+    DOMNode* body = new DOMNode();
+    body->type = NodeType::Element;
+    body->tag_name = "body";
 
-    // Sheet 1
-    StyleSheet sheet1;
-    CSSRule r1;
-    ComplexSelector s1; CompoundSelector c1;
-    c1.parts.push_back({ SimpleSelector::Kind::Class, "primary" });
-    s1.compounds = { c1 };
-    r1.selectors = { s1 };
-    r1.declarations.push_back({ "display", "flex", false });
-    sheet1.rules.push_back(r1);
+    DOMNode* d1 = new DOMNode();
+    d1->type = NodeType::Element;
+    d1->tag_name = "div";
+    d1->attributes["id"] = "d1";
+    d1->parent = body;
+    body->children.push_back(d1);
 
-    // Первичный билд индекса
-    StyleRuleIndex index1(sheet1);
-    index1.build();
+    DOMNode* d2 = new DOMNode();
+    d2->type = NodeType::Element;
+    d2->tag_name = "div";
+    d2->attributes["id"] = "d2";
+    d2->parent = body;
+    body->children.push_back(d2);
 
-    std::vector<uint32_t> matched_entry_indices;
-    index1.collect(node, matched_entry_indices);
+    StyleSheet sheet;
+    {
+        CSSRule r; ComplexSelector s; CompoundSelector c;
+        c.parts.push_back({ SimpleSelector::Kind::Tag, "body" });
+        s.compounds = { c }; r.selectors = { s };
+        r.declarations.push_back({ "display", "block", false });
+        sheet.rules.push_back(std::move(r));
+    }
+    {
+        CSSRule r; ComplexSelector s; CompoundSelector c;
+        c.parts.push_back({ SimpleSelector::Kind::Tag, "div" });
+        s.compounds = { c }; r.selectors = { s };
+        r.declarations.push_back({ "display", "block", false });
+        sheet.rules.push_back(std::move(r));
+    }
+    {
+        CSSRule r; ComplexSelector s; CompoundSelector c;
+        c.parts.push_back({ SimpleSelector::Kind::Id, "d1" });
+        s.compounds = { c }; r.selectors = { s };
+        r.declarations.push_back({ "height",        "50px", false });
+        r.declarations.push_back({ "margin-bottom", "10px", false });
+        sheet.rules.push_back(std::move(r));
+    }
+    {
+        CSSRule r; ComplexSelector s; CompoundSelector c;
+        c.parts.push_back({ SimpleSelector::Kind::Id, "d2" });
+        s.compounds = { c }; r.selectors = { s };
+        r.declarations.push_back({ "height",     "30px", false });
+        r.declarations.push_back({ "margin-top", "20px", false });
+        sheet.rules.push_back(std::move(r));
+    }
 
-    // Должна найтись ровно 1 запись по классу .primary
-    assert(matched_entry_indices.size() == 1);
+    StyleStorageSoA storage = StyleTreeBuilder::build(body, sheet);
+    auto layout = LayoutTreeBuilder::build(storage);
+    LayoutTreeBuilder::compute_layout(layout.get(), 800.0f, storage);
 
-    // Проверяем обратную связь с правилом через индекс
-    uint32_t entry_idx = matched_entry_indices[0];
-    const auto& entry = index1.entry(entry_idx);
-    const CSSRule& matched_rule = index1.rule(entry.rule_index);
-    assert(matched_rule.declarations[0].value == "flex");
+    assert(layout);
+    assert(layout->children.size() == 2);
 
-    // Sheet 2: Проверка независимости нового экземпляра/пересборки
-    StyleSheet sheet2;
-    CSSRule r2;
-    ComplexSelector s2; CompoundSelector c2;
-    c2.parts.push_back({ SimpleSelector::Kind::Id, "btn-id" });
-    s2.compounds = { c2 };
-    r2.selectors = { s2 };
-    r2.declarations.push_back({ "display", "block", false });
-    sheet2.rules.push_back(r2);
+    LayoutNode* Ld1 = layout->children[0].get();
+    LayoutNode* Ld2 = layout->children[1].get();
 
-    StyleRuleIndex index2(sheet2);
-    index2.build();
+    assert(std::abs(Ld1->geometry.y) < 0.01f);
+    assert(std::abs(Ld1->geometry.height - 50.0f) < 0.01f);
+    assert(std::abs(Ld1->geometry.margin_bottom - 10.0f) < 0.01f);
 
-    matched_entry_indices.clear();
-    index2.collect(node, matched_entry_indices);
+    assert(std::abs(Ld2->geometry.y - 80.0f) < 0.01f);
+    assert(std::abs(Ld2->geometry.height - 30.0f) < 0.01f);
 
-    // Должна найтись ровно 1 запись из sheet2 по id
-    assert(matched_entry_indices.size() == 1);
-    const auto& entry2 = index2.entry(matched_entry_indices[0]);
-    assert(index2.rule(entry2.rule_index).declarations[0].value == "block");
+    // body.height = 50 + 10 + 20 + 30 = 110 (margin collapsing РµС‰С‘ РЅРµС‚)
+    assert(std::abs(layout->geometry.height - 110.0f) < 0.01f);
 
-    destroy_tree(node);
-    std::cout << "  [OK] StyleRuleIndex tests passed!\n";
+    delete body; delete d1; delete d2;
+    std::cout << "  [OK] Layout vertical stack passed!\n";
 }
 
 // ============================================================
-//  Main Entry Point
+//  7. Layout: Р°РЅРѕРЅРёРјРЅС‹Рµ Р±Р»РѕРєРё (mixed inline / block)
 // ============================================================
+void test_layout_anonymous_blocks() {
+    std::cout << "[RUN] Testing LayoutTreeBuilder anonymous blocks...\n";
+
+    DOMNode* html = new DOMNode();
+    html->type = NodeType::Element;
+    html->tag_name = "html";
+
+    DOMNode* body = new DOMNode();
+    body->type = NodeType::Element;
+    body->tag_name = "body";
+    body->parent = html;
+    html->children.push_back(body);
+
+    DOMNode* div = new DOMNode();
+    div->type = NodeType::Element;
+    div->tag_name = "div";
+    div->parent = body;
+    body->children.push_back(div);
+
+    // div.children = [Text("hello"), span, inner_div, Text("tail")]
+    DOMNode* t1 = new DOMNode();
+    t1->type = NodeType::Text;
+    t1->text_content = "hello";
+    t1->parent = div;
+    div->children.push_back(t1);
+
+    DOMNode* span = new DOMNode();
+    span->type = NodeType::Element;
+    span->tag_name = "span";
+    span->parent = div;
+    div->children.push_back(span);
+
+    DOMNode* t2 = new DOMNode();
+    t2->type = NodeType::Text;
+    t2->text_content = "world";
+    t2->parent = span;
+    span->children.push_back(t2);
+
+    DOMNode* inner = new DOMNode();
+    inner->type = NodeType::Element;
+    inner->tag_name = "div";
+    inner->parent = div;
+    div->children.push_back(inner);
+
+    DOMNode* t3 = new DOMNode();
+    t3->type = NodeType::Text;
+    t3->text_content = "tail";
+    t3->parent = div;
+    div->children.push_back(t3);
+
+    StyleSheet sheet;
+    {
+        CSSRule r; ComplexSelector s; CompoundSelector c;
+        c.parts.push_back({ SimpleSelector::Kind::Tag, "html" });
+        s.compounds = { c }; r.selectors = { s };
+        r.declarations.push_back({ "display", "block", false });
+        sheet.rules.push_back(std::move(r));
+    }
+    {
+        CSSRule r; ComplexSelector s; CompoundSelector c;
+        c.parts.push_back({ SimpleSelector::Kind::Tag, "body" });
+        s.compounds = { c }; r.selectors = { s };
+        r.declarations.push_back({ "display", "block", false });
+        sheet.rules.push_back(std::move(r));
+    }
+    {
+        CSSRule r; ComplexSelector s; CompoundSelector c;
+        c.parts.push_back({ SimpleSelector::Kind::Tag, "div" });
+        s.compounds = { c }; r.selectors = { s };
+        r.declarations.push_back({ "display", "block", false });
+        sheet.rules.push_back(std::move(r));
+    }
+    // span РЅРµ Р·Р°РґР°С‘Рј вЂ” РѕСЃС‚Р°С‘С‚СЃСЏ inline РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ
+
+    StyleStorageSoA storage = StyleTreeBuilder::build(html, sheet);
+    auto layout = LayoutTreeBuilder::build(storage);
+
+    assert(layout);
+    assert(layout->children.size() == 1);
+    LayoutNode* Lbody = layout->children[0].get();
+    assert(Lbody->children.size() == 1);
+    LayoutNode* Ldiv = Lbody->children[0].get();
+    assert(Ldiv->type == BoxType::Block);
+
+    // РћР¶РёРґР°РµРј: [ Anon[Text, Inline[Text]], Block, Anon[Text] ]
+    assert(Ldiv->children.size() == 3);
+
+    LayoutNode* c0 = Ldiv->children[0].get();
+    assert(c0->type == BoxType::AnonymousBlock);
+    assert(c0->children.size() == 2);
+    assert(c0->children[0]->type == BoxType::Text);
+    assert(c0->children[0]->text_content == "hello");
+    assert(c0->children[1]->type == BoxType::Inline);
+    assert(c0->children[1]->children.size() == 1);
+    assert(c0->children[1]->children[0]->type == BoxType::Text);
+    assert(c0->children[1]->children[0]->text_content == "world");
+
+    LayoutNode* c1 = Ldiv->children[1].get();
+    assert(c1->type == BoxType::Block);
+
+    LayoutNode* c2 = Ldiv->children[2].get();
+    assert(c2->type == BoxType::AnonymousBlock);
+    assert(c2->children.size() == 1);
+    assert(c2->children[0]->type == BoxType::Text);
+    assert(c2->children[0]->text_content == "tail");
+
+    assert(c0->style_soa_idx == UINT32_MAX);
+    assert(c2->style_soa_idx == UINT32_MAX);
+
+    delete t1; delete t2; delete t3;
+    delete span; delete inner;
+    delete div; delete body; delete html;
+    std::cout << "  [OK] Layout anonymous blocks passed!\n";
+}
+
+// ============================================================
+//  8. Layout: display:none РІС‹РєРёРґС‹РІР°РµС‚ РїРѕРґРґРµСЂРµРІРѕ С†РµР»РёРєРѕРј
+// ============================================================
+void test_layout_display_none() {
+    std::cout << "[RUN] Testing LayoutTreeBuilder display:none skip...\n";
+
+    DOMNode* body = new DOMNode();
+    body->type = NodeType::Element;
+    body->tag_name = "body";
+
+    DOMNode* hidden = new DOMNode();
+    hidden->type = NodeType::Element;
+    hidden->tag_name = "div";
+    hidden->attributes["id"] = "hidden";
+    hidden->parent = body;
+    body->children.push_back(hidden);
+
+    DOMNode* deep = new DOMNode();
+    deep->type = NodeType::Element;
+    deep->tag_name = "span";
+    deep->parent = hidden;
+    hidden->children.push_back(deep);
+
+    DOMNode* t = new DOMNode();
+    t->type = NodeType::Text;
+    t->text_content = "invisible";
+    t->parent = deep;
+    deep->children.push_back(t);
+
+    DOMNode* p = new DOMNode();
+    p->type = NodeType::Element;
+    p->tag_name = "p";
+    p->parent = body;
+    body->children.push_back(p);
+
+    StyleSheet sheet;
+    {
+        CSSRule r; ComplexSelector s; CompoundSelector c;
+        c.parts.push_back({ SimpleSelector::Kind::Tag, "body" });
+        s.compounds = { c }; r.selectors = { s };
+        r.declarations.push_back({ "display", "block", false });
+        sheet.rules.push_back(std::move(r));
+    }
+    {
+        CSSRule r; ComplexSelector s; CompoundSelector c;
+        c.parts.push_back({ SimpleSelector::Kind::Tag, "p" });
+        s.compounds = { c }; r.selectors = { s };
+        r.declarations.push_back({ "display", "block", false });
+        sheet.rules.push_back(std::move(r));
+    }
+    {
+        CSSRule r; ComplexSelector s; CompoundSelector c;
+        c.parts.push_back({ SimpleSelector::Kind::Tag, "div" });
+        s.compounds = { c }; r.selectors = { s };
+        r.declarations.push_back({ "display", "none", false });
+        sheet.rules.push_back(std::move(r));
+    }
+
+    StyleStorageSoA storage = StyleTreeBuilder::build(body, sheet);
+    auto layout = LayoutTreeBuilder::build(storage);
+
+    assert(layout);
+    // РћСЃС‚Р°Р»СЃСЏ С‚РѕР»СЊРєРѕ <p>, РІРµС‚РєР° <div id="hidden"> РІС‹РєРёРЅСѓС‚Р°
+    assert(layout->children.size() == 1);
+    assert(layout->children[0]->type == BoxType::Block);
+    assert(layout->children[0]->children.empty());
+
+    // РџРѕР»РЅС‹Р№ РѕР±С…РѕРґ: РґРѕР»Р¶РЅРѕ Р±С‹С‚СЊ СЂРѕРІРЅРѕ 2 СѓР·Р»Р° (body + p).
+    // Р›РѕРІРёС‚ СЃР»СѓС‡Р°Р№, РєРѕРіРґР° display:none С„РёР»СЊС‚СЂСѓРµС‚ С‚РѕР»СЊРєРѕ СЃР°Рј СѓР·РµР»,
+    // РЅРѕ РІСЃС‘ СЂР°РІРЅРѕ СЃРѕР·РґР°С‘С‚ РµРіРѕ РїРѕС‚РѕРјРєРѕРІ.
+    std::vector<const LayoutNode*> todo;
+    todo.push_back(layout.get());
+    size_t total = 0;
+    while (!todo.empty()) {
+        const LayoutNode* n = todo.back(); todo.pop_back();
+        ++total;
+        for (auto& ch : n->children) todo.push_back(ch.get());
+    }
+    assert(total == 2);
+
+    delete t; delete deep; delete hidden; delete p; delete body;
+    std::cout << "  [OK] Layout display:none passed!\n";
+}
 int main() {
     std::cout << "========================================\n";
     std::cout << " Running Full Engine Subsystem Tests   \n";
     std::cout << "========================================\n";
 
-    test_selector_matching();
-    test_cascade_and_specificity();
-    test_inheritance_and_units();
-    test_rule_index_buckets();
+
+    // --- Layout tree ---
+    test_layout_basic_block();
+    test_layout_vertical_stack();
+    test_layout_anonymous_blocks();
+    test_layout_display_none();
 
     std::cout << "========================================\n";
     std::cout << " ALL SUITE TESTS PASSED SUCCESSFULLY! \n";
