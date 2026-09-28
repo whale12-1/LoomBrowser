@@ -7,6 +7,7 @@
 #include <cmath>
 #include "style_storage_soa.h"
 #include "selector_matcher.h"
+#include "style_origin.h"     // ← добавить
 
 // ============================================================
 //  Индекс правил по «правому краю» complex-селектора.
@@ -17,49 +18,78 @@
 // ============================================================
 class StyleRuleIndex {
 public:
-    // Индексы вместо указателей — невосприимчиво к реаллокации rules/selectors.
-    struct Entry {
-        uint32_t    rule_index = 0;   // в sheet_.rules
-        uint32_t    selector_index = 0;   // в rule.selectors
-        Specificity spec;
-        uint32_t    order = 0;            // глобальный порядок объявления
+    // Ссылка на таблицу стилей + её origin.
+    struct SheetRef {
+        const StyleSheet* sheet;
+        Origin origin;
     };
 
-    explicit StyleRuleIndex(const StyleSheet& sheet) : sheet_(sheet) {}
+    // Индексы вместо указателей — невосприимчиво к реаллокации rules/selectors.
+    struct Entry {
+        uint32_t    sheet_index = 0;   // в sheets_
+        uint32_t    rule_index = 0;   // в sheet->rules
+        uint32_t    selector_index = 0;   // в rule.selectors
+        Specificity spec;
+        uint32_t    order = 0;   // глобальный порядок across всех sheets
+        Origin      origin = Origin::Author;
+    };
 
-    void build() {
+    StyleRuleIndex() = default;
+
+    // Старый API — один author-sheet (обратная совместимость).
+    explicit StyleRuleIndex(const StyleSheet& sheet) {
+        sheets_.push_back({ &sheet, Origin::Author });
+    }
+
+    // Новый API — несколько таблиц с разными origins.
+    void build(const std::vector<SheetRef>& sheets) {
         id_buckets_.clear();
         class_buckets_.clear();
         tag_buckets_.clear();
         universal_bucket_.clear();
         entries_.clear();
 
-        // Точная оценка сверху — гарантирует отсутствие реаллокаций entries_.
+        sheets_ = sheets;
+
         size_t total = 0;
-        for (const auto& r : sheet_.rules) total += r.selectors.size();
+        for (const auto& s : sheets_)
+            for (const auto& r : s.sheet->rules)
+                total += r.selectors.size();
         entries_.reserve(total);
 
         uint32_t order = 0;
-        for (uint32_t ri = 0; ri < sheet_.rules.size(); ++ri) {
-            const CSSRule& rule = sheet_.rules[ri];
-            for (uint32_t si = 0; si < rule.selectors.size(); ++si) {
-                const ComplexSelector& sel = rule.selectors[si];
-                if (sel.compounds.empty()) continue;
+        for (uint32_t shi = 0; shi < sheets_.size(); ++shi) {
+            const StyleSheet& sh = *sheets_[shi].sheet;
+            const Origin org = sheets_[shi].origin;
 
-                Entry e;
-                e.rule_index = ri;
-                e.selector_index = si;
-                e.spec = SelectorMatcher::compute_specificity(sel);
-                e.order = order++;
+            for (uint32_t ri = 0; ri < sh.rules.size(); ++ri) {
+                const CSSRule& rule = sh.rules[ri];
+                for (uint32_t si = 0; si < rule.selectors.size(); ++si) {
+                    const ComplexSelector& sel = rule.selectors[si];
+                    if (sel.compounds.empty()) continue;
 
-                const uint32_t eidx = static_cast<uint32_t>(entries_.size());
-                entries_.push_back(e);
-                index_entry(eidx, sel);
+                    Entry e;
+                    e.sheet_index = shi;
+                    e.rule_index = ri;
+                    e.selector_index = si;
+                    e.spec = SelectorMatcher::compute_specificity(sel);
+                    e.order = order++;
+                    e.origin = org;
+
+                    const uint32_t eidx = static_cast<uint32_t>(entries_.size());
+                    entries_.push_back(e);
+                    index_entry(eidx, sel);
+                }
             }
         }
     }
 
-    // out НЕ очищается — caller сам решает (scratch-паттерн).
+   
+    // Старый build() без аргументов — используется в конструкторе-обёртке.
+    void build() {
+        if (!sheets_.empty()) build(sheets_);
+    }
+
     void collect(const DOMNode* node, std::vector<uint32_t>& out) const {
         auto it_id = node->attributes.find("id");
         if (it_id != node->attributes.end()) {
@@ -91,16 +121,21 @@ public:
         out.insert(out.end(), universal_bucket_.begin(), universal_bucket_.end());
     }
 
-    // --- Резолверы по индексам ---
+    // --- Резолверы ---
     const Entry& entry(uint32_t eidx) const { return entries_[eidx]; }
-    const CSSRule& rule(uint32_t ri)   const { return sheet_.rules[ri]; }
-    const ComplexSelector& selector(uint32_t ri, uint32_t si) const {
-        return sheet_.rules[ri].selectors[si];
+
+    const CSSRule& rule(const Entry& e) const {
+        return sheets_[e.sheet_index].sheet->rules[e.rule_index];
+    }
+    const CSSRule& rule(uint32_t sheet_idx, uint32_t rule_idx) const {
+        return sheets_[sheet_idx].sheet->rules[rule_idx];
+    }
+    const ComplexSelector& selector(const Entry& e) const {
+        return rule(e).selectors[e.selector_index];
     }
     const Declaration& declaration(const Entry& e, uint32_t di) const {
-        return sheet_.rules[e.rule_index].declarations[di];
+        return rule(e).declarations[di];
     }
-    const StyleSheet& sheet() const { return sheet_; }
 
 private:
     void index_entry(uint32_t eidx, const ComplexSelector& sel) {
@@ -128,7 +163,7 @@ private:
         if (!indexed) universal_bucket_.push_back(eidx);
     }
 
-    const StyleSheet& sheet_;
+    std::vector<SheetRef> sheets_;
     std::unordered_map<std::string, std::vector<uint32_t>> id_buckets_;
     std::unordered_map<std::string, std::vector<uint32_t>> class_buckets_;
     std::unordered_map<std::string, std::vector<uint32_t>> tag_buckets_;
@@ -141,13 +176,15 @@ private:
 // ============================================================
 class StyleTreeBuilder {
 public:
-    static StyleStorageSoA build(DOMNode* dom_root, const StyleSheet& sheet) {
+    static StyleStorageSoA build(DOMNode* dom_root,
+        const std::vector<StyleRuleIndex::SheetRef>& sheets)
+    {
         StyleStorageSoA storage;
         storage.dom_nodes.reserve(256);
         if (!dom_root) return storage;
 
-        StyleRuleIndex index(sheet);
-        index.build();
+        StyleRuleIndex index;
+        index.build(sheets);
 
         std::vector<uint32_t> scratch;
         scratch.reserve(64);
@@ -155,6 +192,13 @@ public:
         dfs_build(dom_root, INVALID_INDEX, index, scratch, storage);
         return storage;
     }
+
+    static StyleStorageSoA build(DOMNode* dom_root, const StyleSheet& author_sheet) {
+        return build(dom_root, std::vector<StyleRuleIndex::SheetRef>{
+            { &author_sheet, Origin::Author }
+        });
+    }
+
 
 private:
     // -------------------------------------------------------------
@@ -192,19 +236,37 @@ private:
     //  Каскад: собрать matched declarations, разрешить конфликты
     // -------------------------------------------------------------
     struct Winner {
-        uint32_t    rule_index = UINT32_MAX;   // UINT32_MAX = «нет победителя»
+        uint32_t    sheet_index = UINT32_MAX;   // UINT32_MAX = «нет победителя»
+        uint32_t    rule_index = UINT32_MAX;
         uint32_t    decl_index = 0;
         Specificity spec;
         uint32_t    order = 0;
         bool        important = false;
+        Origin      origin = Origin::Author;
 
         bool empty() const { return rule_index == UINT32_MAX; }
 
+        // Порядок проверок — как в CSS Cascading and Inheritance Level 4:
+        //   1. Origin + Importance (одним блоком, т.к. !important инвертирует origin)
+        //   2. Specificity
+        //   3. Order of appearance
         bool dominates(const Winner& o) const {
+            // 1a. !important всегда бьёт normal
             if (important != o.important) return important;
+
+            // 1b. Origin. Для normal Author > User > UA,
+            //     для important порядок инвертирован: UA > User > Author.
+            if (origin != o.origin) {
+                if (!important) return origin > o.origin;
+                /*important*/   return origin < o.origin;
+            }
+
+            // 2. Specificity
             if (spec.a != o.spec.a) return spec.a > o.spec.a;
             if (spec.b != o.spec.b) return spec.b > o.spec.b;
             if (spec.c != o.spec.c) return spec.c > o.spec.c;
+
+            // 3. Source order
             return order > o.order;
         }
     };
@@ -225,11 +287,11 @@ private:
 
         for (uint32_t eidx : scratch) {
             const auto& entry = index.entry(eidx);
-            const ComplexSelector& sel = index.selector(entry.rule_index, entry.selector_index);
+            const ComplexSelector& sel = index.selector(entry);
 
             if (!SelectorMatcher::match_complex(node, sel)) continue;
 
-            const CSSRule& rule = index.rule(entry.rule_index);
+            const CSSRule& rule = index.rule(entry);
             for (uint32_t di = 0; di < rule.declarations.size(); ++di) {
                 const Declaration& d = rule.declarations[di];
 
@@ -237,11 +299,13 @@ private:
                 if (!lookup_prop(d.property, p)) continue;
 
                 Winner w;
+                w.sheet_index = entry.sheet_index;
                 w.rule_index = entry.rule_index;
                 w.decl_index = di;
                 w.spec = entry.spec;
                 w.order = entry.order;
                 w.important = d.important;
+                w.origin = entry.origin;      // ← ключевое дополнение
 
                 const size_t pi = style::prop_index(p);
                 if (winners[pi].empty() || w.dominates(winners[pi]))
@@ -252,7 +316,8 @@ private:
         // 2. Теперь применяем победившие декларации (они перепишут унаследованные значения)
         for (size_t pi = 0; pi < style::PROP_COUNT; ++pi) {
             if (winners[pi].empty()) continue;
-            const Declaration& d = index.rule(winners[pi].rule_index)
+            const Declaration& d = index.rule(winners[pi].sheet_index,
+                winners[pi].rule_index)
                 .declarations[winners[pi].decl_index];
             apply_declaration(static_cast<Prop>(pi), d, idx, parent_idx, storage);
             storage.mark_explicit(idx, static_cast<Prop>(pi));

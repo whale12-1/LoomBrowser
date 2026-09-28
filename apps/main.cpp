@@ -91,8 +91,11 @@ int main(int argc, char** argv) {
     auto layout = LayoutTreeBuilder::build(storage);
     if (!layout) { std::cerr << "layout build failed\n"; return 1; }
 
-    constexpr float kViewportWidth = 1024.0f;
-    LayoutTreeBuilder::compute_layout(layout.get(), kViewportWidth, storage);
+    LayoutTreeBuilder::Viewport viewport;
+    viewport.width = 1024.0f;
+    viewport.height = 768.0f;
+
+    LayoutTreeBuilder::compute_layout(layout.get(), viewport, storage);
     std::cout << "[layout]  root "
         << layout->geometry.width << " x "
         << layout->geometry.height << "\n";

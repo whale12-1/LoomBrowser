@@ -5,11 +5,13 @@
 #include "../parsers/css_parser/headers/css_parser.h"
 #include "../parsers/html_parser/headers/html_parser.h"
 #include "../parsers/selector_matcher/style_tree_builder.h"
+#include "../parsers/selector_matcher/user_agent_stylesheet.h"   // в начале файла
+#include "../parsers/selector_matcher/style_origin.h"
 #include "../layout/headers/layout_tree_builder.h"
 #include <QVBoxLayout>
 #include <QStatusBar>
 #include <QLabel>
-
+#include <QDebug>
 namespace {
 
     // Первый Element в поддереве (пропускаем Document/Text/Comment)
@@ -34,30 +36,56 @@ namespace {
 
     // Полный пайплайн: HTML (+ встроенный CSS из <style>) → DisplayList.
     // Арена живёт внутри функции; DisplayList не держит ссылок на неё
-    // (только heap-скопированные строки), поэтому безопасно возвращать.
-    DisplayList renderHtml(const std::string& html, float viewport_width) {
-        ArenaAllocator arena;
+    // (только heap-скопированные строки), поэтому безопасно возвращать
 
+    DisplayList renderHtml(const std::string& html,
+        float viewport_width,
+        float viewport_height){
+        ArenaAllocator arena;
         HTMLParser hp(arena);
         DOMNode* doc = hp.parse(html);
         DOMNode* root = firstElement(doc);
         if (!root) return {};
 
-        // CSS вытаскиваем из <style> внутри документа.
-        // Внешние <link rel="stylesheet"> пока не поддержаны.
-        std::string css;
-        collectStyleText(doc, css);
+        std::string author_css;
+        collectStyleText(doc, author_css);
+
+        // ─── ДИАГНОСТИКА ───
+        qDebug() << "[render] html bytes:" << html.size();
+        qDebug() << "[render] author css bytes:" << author_css.size();
+        if (!author_css.empty())
+            qDebug() << "[render] css preview:"
+            << QString::fromStdString(author_css.substr(0, 200));
 
         CSSParser cp(arena);
-        StyleSheet* sheet = cp.parse(css);
-        if (!sheet) return {};
+        StyleSheet* ua_sheet = cp.parse(ua_css::kSource);
+        StyleSheet* author_sheet = cp.parse(author_css);
 
-        StyleStorageSoA storage = StyleTreeBuilder::build(root, *sheet);
+        qDebug() << "[render] ua rules:" << ua_sheet->rules.size();
+        qDebug() << "[render] author rules:" << author_sheet->rules.size();
+
+        std::vector<StyleRuleIndex::SheetRef> sources = {
+            { ua_sheet,     Origin::UserAgent },
+            { author_sheet, Origin::Author    },
+        };
+        StyleStorageSoA storage = StyleTreeBuilder::build(root, sources);
+
+        // ─── Ещё диагностика: что попало в SoA ───
+        for (uint32_t i = 0; i < storage.size(); ++i) {
+            const std::string& tag = storage.dom_nodes[i]->tag_name;
+            if (tag == "div" || tag == "body") {
+                qDebug() << "[style]" << QString::fromStdString(tag)
+                    << "width:" << storage.widths[i].value
+                    << "unit:" << int(storage.widths[i].unit)
+                    << "bg:" << QString::number(storage.background_colors[i], 16);
+            }
+        }
 
         auto layout = LayoutTreeBuilder::build(storage);
+        // ...
         if (!layout) return {};
 
-        LayoutTreeBuilder::compute_layout(layout.get(), viewport_width, storage);
+        LayoutTreeBuilder::compute_layout(layout.get(), {viewport_width, viewport_height}, storage);
 
         return DisplayListBuilder::build(layout.get(), storage);
     }
@@ -157,7 +185,10 @@ void BrowserWindow::fetchCurrent() {
 void BrowserWindow::onHttpResponse(const net::HttpResponse& resp) {
     const std::string html = net::decodeToUtf8(resp.body, resp.charset);
 
-    DisplayList list = renderHtml(html, float(view_->viewport()->width()));
+    const int vw = view_->viewport()->width();
+    const int vh = view_->viewport()->height();
+
+    DisplayList list = renderHtml(html, float(vw), float(vh));
 
     view_->setDisplayList(list);
     status_label_->setText(
@@ -190,7 +221,10 @@ void BrowserWindow::showErrorPage(const QString& title, const QString& details) 
         "<p>" + details.toHtmlEscaped().toStdString() + "</p>"
         "</body></html>";
 
-    DisplayList list = renderHtml(html, float(view_->viewport()->width()));
+    const int vw = view_->viewport()->width();
+    const int vh = view_->viewport()->height();
+
+    DisplayList list = renderHtml(html, float(vw), float(vh));
     view_->setDisplayList(list);
     status_label_->setText(title);
 }

@@ -484,15 +484,17 @@ private:
         }
 
         // --- state-based: в статичном дереве НЕ матчатся ---
-        if (n == "hover" || n == "focus" || n == "active" ||
-            n == "visited" || n == "link" || n == "target") return false;
+// --- state-based: в статичном дереве НЕ матчатся ---
+        if (n == "hover" || n == "focus" || n == "active" || n == "target") return false;
 
-        // --- link-related: <a href> / <area href> ---
-        if (n == "any-link" || n == "link") {
+        // :visited мы не отслеживаем — считаем, что не матчится
+        if (n == "visited") return false;
+
+        // :link / :any-link — <a href> и <area href>
+        if (n == "link" || n == "any-link") {
             return (node->tag_name == "a" || node->tag_name == "area") &&
                 css_util::attr_present(node, "href");
         }
-
         // --- прочие молча пропускаем как «не совпадает» ---
         return false;
     }
