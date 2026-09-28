@@ -14,6 +14,10 @@ using style::FlexDir;  using style::Justify;    using style::AlignItems;
 using style::Length;   using style::Unit;       using style::Color;
 using style::Prop;     using style::PROP_MASK_WORDS;
 
+
+// style_storage_soa.h (внутри или рядом со struct StyleStorageSoA)
+
+
 struct StyleStorageSoA {
     // =========================================================
     // 1. Топология (индексы по узлам, а не указатели)
@@ -142,3 +146,13 @@ struct StyleStorageSoA {
         return (word >> (style::prop_index(p) & 63)) & 1ull;
     }
 };
+
+namespace style {
+    inline float resolve_line_height(const StyleStorageSoA& s, uint32_t idx) {
+        const float lh = s.line_heights[idx];
+        const float fs = s.font_sizes[idx];
+        if (lh == 0.0f) return fs * 1.2f;   // normal
+        if (lh < 0.0f) return -lh * fs;    // unitless multiplier
+        return lh;                          // px
+    }
+}

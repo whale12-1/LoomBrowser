@@ -138,6 +138,115 @@ namespace css_util {
         return k <= 0 && (-k) % (-a) == 0;
     }
 
+    // Рекурсивный расчёт specificity для текста селектора
+// (используется для :not/:is/:has, где специфичность = специфичность аргумента).
+    inline Specificity specificity_of_simple_text(std::string_view text);
+
+    inline Specificity specificity_of_arg_list(std::string_view arg) {
+        Specificity max{};
+        size_t start = 0;
+        while (start <= arg.size()) {
+            size_t comma = arg.find(',', start);
+            std::string_view part = (comma == std::string_view::npos)
+                ? arg.substr(start)
+                : arg.substr(start, comma - start);
+
+            while (!part.empty() && std::isspace((unsigned char)part.front()))
+                part.remove_prefix(1);
+            while (!part.empty() && std::isspace((unsigned char)part.back()))
+                part.remove_suffix(1);
+
+            Specificity s = specificity_of_simple_text(part);
+            if (max < s) max = s;
+
+            if (comma == std::string_view::npos) break;
+            start = comma + 1;
+        }
+        return max;
+    }
+
+    inline Specificity specificity_of_simple_text(std::string_view text) {
+        Specificity s{};
+        size_t i = 0, n = text.size();
+        while (i < n) {
+            char c = text[i];
+
+            if (c == '*') { ++i; continue; }
+
+            if (c == '.') {
+                ++i;
+                while (i < n && (std::isalnum((unsigned char)text[i]) ||
+                    text[i] == '-' || text[i] == '_')) ++i;
+                s.b += 1;
+            }
+            else if (c == '#') {
+                ++i;
+                while (i < n && (std::isalnum((unsigned char)text[i]) ||
+                    text[i] == '-' || text[i] == '_')) ++i;
+                s.a += 1;
+            }
+            else if (c == ':') {
+                ++i;
+                bool double_colon = false;
+                if (i < n && text[i] == ':') { double_colon = true; ++i; }
+
+                size_t name_start = i;
+                while (i < n && (std::isalnum((unsigned char)text[i]) ||
+                    text[i] == '-')) ++i;
+                std::string_view name = text.substr(name_start, i - name_start);
+
+                if (i < n && text[i] == '(') {
+                    size_t depth = 1;
+                    ++i;
+                    size_t arg_start = i;
+                    while (i < n && depth > 0) {
+                        if (text[i] == '(') ++depth;
+                        else if (text[i] == ')') {
+                            --depth;
+                            if (depth == 0) break;
+                        }
+                        ++i;
+                    }
+                    std::string_view inner = text.substr(arg_start, i - arg_start);
+                    if (i < n) ++i;
+
+                    if (name == "where") {
+                        // 0 — ничего не добавляем
+                    }
+                    else if (name == "not" || name == "is" || name == "has" ||
+                        name == "matches" || name == "any") {
+                        Specificity inner_spec = specificity_of_arg_list(inner);
+                        s.a += inner_spec.a;
+                        s.b += inner_spec.b;
+                        s.c += inner_spec.c;
+                    }
+                    else {
+                        s.b += 1;  // :nth-child, :nth-of-type и пр.
+                    }
+                }
+                else {
+                    if (double_colon) s.c += 1;
+                    else              s.b += 1;
+                }
+            }
+            else if (c == '[') {
+                ++i;
+                while (i < n && text[i] != ']') ++i;
+                if (i < n) ++i;
+                s.b += 1;
+            }
+            else if (std::isalpha((unsigned char)c)) {
+                while (i < n && (std::isalnum((unsigned char)text[i]) ||
+                    text[i] == '-' || text[i] == '_')) ++i;
+                s.c += 1;
+            }
+            else {
+                ++i; // пробелы, '>' и прочее — пропускаем
+            }
+        }
+        return s;
+    }
+
 } // namespace css_util
 
 // ============================================================
@@ -167,13 +276,17 @@ public:
                 case K::Class:         s.b += 1; break;
                 case K::Attribute:     s.b += 1; break;
                 case K::PseudoClass:
-                    // :where() обнуляет вклад
                     if (p.name == "where") break;
-                    if (p.name == "is" || p.name == "not" || p.name == "has") {
-                        // грубая аппроксимация — берём вклад только этих псевдо
+                    if (p.name == "not" || p.name == "is" || p.name == "has" ||
+                        p.name == "matches" || p.name == "any") {
+                        Specificity inner = css_util::specificity_of_arg_list(p.arg);
+                        s.a += inner.a;
+                        s.b += inner.b;
+                        s.c += inner.c;
+                    }
+                    else {
                         s.b += 1;
                     }
-                    else s.b += 1;
                     break;
                 case K::PseudoElement: s.c += 1; break;
                 case K::Tag:           s.c += 1; break;

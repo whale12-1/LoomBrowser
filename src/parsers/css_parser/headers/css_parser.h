@@ -1,8 +1,10 @@
-#pragma once
+п»ї#pragma once
 #include <string>
 #include <vector>
 #include <cctype>
 #include <cstring>
+#include <array>
+#include <unordered_map>
 #include <cstdint>
 #include <algorithm>
 #include "./arena_memory_allocator/headers/arena.h"
@@ -12,7 +14,7 @@ class CSSParser {
 public:
     explicit CSSParser(ArenaAllocator& arena) : arena_(arena) {}
 
-    // Точка входа. Объект переиспользуем между вызовами.
+    // РўРѕС‡РєР° РІС…РѕРґР°. РћР±СЉРµРєС‚ РїРµСЂРµРёСЃРїРѕР»СЊР·СѓРµРј РјРµР¶РґСѓ РІС‹Р·РѕРІР°РјРё.
     StyleSheet* parse(const std::string& css_text) {
         input_ = css_text;
         pos_ = 0;
@@ -47,7 +49,7 @@ public:
 
 private:
     // =================================================================
-    //  Состояние
+    //  РЎРѕСЃС‚РѕСЏРЅРёРµ
     // =================================================================
     ArenaAllocator& arena_;
     std::string input_;
@@ -55,7 +57,7 @@ private:
     std::vector<std::string> errors_;
 
     // =================================================================
-    //  Базовые утилиты
+    //  Р‘Р°Р·РѕРІС‹Рµ СѓС‚РёР»РёС‚С‹
     // =================================================================
     bool eof() const { return pos_ >= input_.size(); }
     char peek(size_t off = 0) const {
@@ -99,7 +101,7 @@ private:
     }
 
     // =================================================================
-    //  Идентификаторы с CSS escape-последовательностями (\XX, \XXXXXX)
+    //  РРґРµРЅС‚РёС„РёРєР°С‚РѕСЂС‹ СЃ CSS escape-РїРѕСЃР»РµРґРѕРІР°С‚РµР»СЊРЅРѕСЃС‚СЏРјРё (\XX, \XXXXXX)
     // =================================================================
     std::string parse_identifier() {
         std::string out;
@@ -119,7 +121,7 @@ private:
                     ++pos_; ++digits;
                 }
                 if (digits == 0) cp = static_cast<unsigned char>(advance());
-                else if (is_ws(peek())) ++pos_; // один пробел после escape
+                else if (is_ws(peek())) ++pos_; // РѕРґРёРЅ РїСЂРѕР±РµР» РїРѕСЃР»Рµ escape
                 append_utf8(out, cp);
             }
             else if (is_ident_char(c)) {
@@ -158,7 +160,7 @@ private:
     }
 
     // =================================================================
-    //  Строки ("..." и '...')
+    //  РЎС‚СЂРѕРєРё ("..." Рё '...')
     // =================================================================
     std::string parse_string() {
         char quote = advance();
@@ -187,8 +189,8 @@ private:
     }
 
     // =================================================================
-    //  Значение декларации: до ';' / '}' (с учётом вложенности скобок)
-    //  Корректно обрабатывает строки, url(), calc(), !important.
+    //  Р—РЅР°С‡РµРЅРёРµ РґРµРєР»Р°СЂР°С†РёРё: РґРѕ ';' / '}' (СЃ СѓС‡С‘С‚РѕРј РІР»РѕР¶РµРЅРЅРѕСЃС‚Рё СЃРєРѕР±РѕРє)
+    //  РљРѕСЂСЂРµРєС‚РЅРѕ РѕР±СЂР°Р±Р°С‚С‹РІР°РµС‚ СЃС‚СЂРѕРєРё, url(), calc(), !important.
     // =================================================================
     std::string parse_value_until(char stop1, char stop2, bool& important_flag) {
         std::string out;
@@ -198,7 +200,7 @@ private:
         while (!eof()) {
             char c = peek();
 
-            // Комментарии внутри значения выкидываем
+            // РљРѕРјРјРµРЅС‚Р°СЂРёРё РІРЅСѓС‚СЂРё Р·РЅР°С‡РµРЅРёСЏ РІС‹РєРёРґС‹РІР°РµРј
             if (c == '/' && peek(1) == '*') {
                 pos_ += 2;
                 while (!eof() && !(peek() == '*' && peek(1) == '/')) ++pos_;
@@ -230,8 +232,14 @@ private:
             if (c == '"' || c == '\'') {
                 char q = c;
                 out += q; ++pos_;
-                while (!eof() && peek() != q) {
+                bool terminated = false;
+                while (!eof()) {
                     char cc = peek();
+                    if (cc == q) {
+                        out += cc; ++pos_;
+                        terminated = true;
+                        break;
+                    }
                     if (cc == '\\' && pos_ + 1 < input_.size()) {
                         out += cc; ++pos_;
                         out += peek(); ++pos_;
@@ -240,7 +248,7 @@ private:
                         out += cc; ++pos_;
                     }
                 }
-                if (!eof()) { out += q; ++pos_; }
+                if (!terminated) report_error("Unterminated string in value");
                 continue;
             }
 
@@ -371,7 +379,7 @@ private:
             }
             compound.parts.push_back(std::move(s));
         }
-        if (pos_ == start_pos && !eof()) ++pos_; // гарантия прогресса
+        if (pos_ == start_pos && !eof()) ++pos_; // РіР°СЂР°РЅС‚РёСЏ РїСЂРѕРіСЂРµСЃСЃР°
     }
 
     bool parse_attribute_selector(SimpleSelector& s) {
@@ -438,7 +446,7 @@ private:
     }
 
     // =================================================================
-    //  Блок { ... }: declarations + вложенные @-правила
+    //  Р‘Р»РѕРє { ... }: declarations + РІР»РѕР¶РµРЅРЅС‹Рµ @-РїСЂР°РІРёР»Р°
     // =================================================================
     void parse_block_contents(std::vector<Declaration>& decls,
         std::vector<AtRule>& nested) {
@@ -469,15 +477,34 @@ private:
                     d.important = important;
                     d.is_custom_property = (d.property.size() >= 2 &&
                         d.property[0] == '-' && d.property[1] == '-');
-                    decls.push_back(std::move(d));
+
+                    // Shorthand в†’ 4 longhand-РґРµРєР»Р°СЂР°С†РёРё СЃ С‚РµРј Р¶Рµ order Рё important.
+                    auto sit = shorthand_table().find(d.property);
+                    std::array<std::string, 4> expanded;
+                    if (sit != shorthand_table().end() &&
+                        expand_shorthand_1to4(d.value, expanded))
+                    {
+                        for (int k = 0; k < 4; ++k) {
+                            Declaration dd;
+                            dd.property = sit->second.longhands[k];
+                            dd.value = std::move(expanded[k]);
+                            dd.important = d.important;
+                            decls.push_back(std::move(dd));
+                        }
+                    }
+                    else {
+                        // РќРµ shorthand РёР»Рё Р·РЅР°С‡РµРЅРёРµ РЅРµ СЂР°Р·РІРѕСЂР°С‡РёРІР°РµС‚СЃСЏ (РЅР°РїСЂРёРјРµСЂ, "inherit")
+                        // вЂ” РєР»Р°РґС‘Рј РєР°Рє РµСЃС‚СЊ, РґР°Р»СЊС€Рµ StyleTreeBuilder СЃР°Рј СЂР°Р·Р±РµСЂС‘С‚СЃСЏ.
+                        decls.push_back(std::move(d));
+                    }
                 }
                 match(';');
             }
             else {
-                // Не декларация — попытка вложенного стилевого правила (CSS Nesting).
-                // Полноценно не поддерживаем — пропускаем до ';' или '}'.
+                // РќРµ РґРµРєР»Р°СЂР°С†РёСЏ вЂ” РїРѕРїС‹С‚РєР° РІР»РѕР¶РµРЅРЅРѕРіРѕ СЃС‚РёР»РµРІРѕРіРѕ РїСЂР°РІРёР»Р° (CSS Nesting).
+                // РџРѕР»РЅРѕС†РµРЅРЅРѕ РЅРµ РїРѕРґРґРµСЂР¶РёРІР°РµРј вЂ” РїСЂРѕРїСѓСЃРєР°РµРј РґРѕ ';' РёР»Рё '}'.
                 pos_ = save;
-                report_error("Nested style rule not supported — skipped");
+                report_error("Nested style rule not supported вЂ” skipped");
                 int depth = 0;
                 while (!eof()) {
                     char c = peek();
@@ -515,7 +542,7 @@ private:
         at.name = parse_identifier();
         for (char& c : at.name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
 
-        // Prelude: до '{' или ';' на нулевой глубине скобок
+        // Prelude: РґРѕ '{' РёР»Рё ';' РЅР° РЅСѓР»РµРІРѕР№ РіР»СѓР±РёРЅРµ СЃРєРѕР±РѕРє
         {
             size_t start = pos_;
             int depth = 0;
@@ -540,7 +567,7 @@ private:
             return at;
         }
 
-        // Тела разных at-rules
+        // РўРµР»Р° СЂР°Р·РЅС‹С… at-rules
         static const char* decl_only[] = {
             "font-face", "page", "viewport", "counter-style", "property", "font-feature-values"
         };
@@ -560,5 +587,53 @@ private:
             }
         }
         return at;
+    }
+
+    // =================================================================
+//  Р Р°Р·РІРѕСЂРѕС‚ 1-4 Р·РЅР°С‡РµРЅРёР№ shorthand РІ 4 РѕС‚РґРµР»СЊРЅС‹С… С‚РѕРєРµРЅР°.
+//  "24px"           в†’ {24px, 24px, 24px, 24px}
+//  "10px 20px"      в†’ {10px, 20px, 10px, 20px}
+//  "1px 2px 3px"    в†’ {1px, 2px, 3px, 2px}
+//  "1px 2px 3px 4px"в†’ {1px, 2px, 3px, 4px}
+//  Р’РѕР·РІСЂР°С‰Р°РµС‚ false, РµСЃР»Рё С‚РѕРєРµРЅРѕРІ 0 РёР»Рё >4.
+// =================================================================
+    static bool expand_shorthand_1to4(const std::string& value,
+        std::array<std::string, 4>& out) {
+        std::array<std::string, 4> tok;
+        int n = 0;
+        size_t i = 0, sz = value.size();
+        while (i < sz && n < 4) {
+            while (i < sz && is_ws(value[i])) ++i;
+            size_t st = i;
+            while (i < sz && !is_ws(value[i])) ++i;
+            if (i > st) tok[n++] = value.substr(st, i - st);
+        }
+        // Р•СЃР»Рё РїРѕСЃР»Рµ 4 С‚РѕРєРµРЅРѕРІ РѕСЃС‚Р°Р»РёСЃСЊ РЅРµРїСѓСЃС‚С‹Рµ вЂ” Р·РЅР°С‡РµРЅРёРµ С€РёСЂРµ, С‡РµРј shorthand.
+        while (i < sz && is_ws(value[i])) ++i;
+        if (i < sz) return false;
+
+        switch (n) {
+        case 1: out = { tok[0], tok[0], tok[0], tok[0] }; break;
+        case 2: out = { tok[0], tok[1], tok[0], tok[1] }; break;
+        case 3: out = { tok[0], tok[1], tok[2], tok[1] }; break;
+        case 4: out = tok; break;
+        default: return false;   // n == 0
+        }
+        return true;
+    }
+
+    struct ShorthandMap {
+        const char* longhands[4];
+    };
+    static const std::unordered_map<std::string, ShorthandMap>& shorthand_table() {
+        static const std::unordered_map<std::string, ShorthandMap> t = {
+            { "margin",       {{ "margin-top",  "margin-right",
+                                 "margin-bottom","margin-left"  }} },
+            { "padding",      {{ "padding-top", "padding-right",
+                                 "padding-bottom","padding-left" }} },
+            { "border-width", {{ "border-top-width",  "border-right-width",
+                                 "border-bottom-width","border-left-width"  }} },
+        };
+        return t;
     }
 };

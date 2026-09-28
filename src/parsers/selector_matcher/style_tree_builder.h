@@ -384,17 +384,17 @@ private:
         case Prop::LineHeight: {
             if (v == "normal") { storage.line_heights[idx] = 0.0f; break; }
             float fs = storage.font_sizes[idx];
-            float result = 0.0f;
-            if (v.size() > 1 && v[0] != '+' && v[0] != '-' &&
-                v.find_first_not_of("0123456789.") != std::string::npos) {
+            // Эвристика: если в строке есть не-числовые не-разделительные символы — это единицы.
+            bool has_unit = (v.find_first_not_of("0123456789.+-eE") != std::string::npos);
+            if (has_unit) {
                 Length l = parse_length(v);
-                result = resolve_length(l, fs, idx, storage);            // + idx
+                storage.line_heights[idx] = resolve_length(l, fs, idx, storage); // px, > 0
             }
             else {
+                // unitless — храним как отрицательное значение (1.5 → -1.5)
                 float mul = std::strtof(v.c_str(), nullptr);
-                result = mul * fs;
+                storage.line_heights[idx] = -mul;
             }
-            storage.line_heights[idx] = result;
             break;
         }
 
@@ -476,10 +476,7 @@ private:
     //  Финализация: дефолты, зависящие от других полей
     // -------------------------------------------------------------
     static void finalize(uint32_t idx, StyleStorageSoA& s) {
-        // line-height: normal → 1.2 * font-size
-        if (s.line_heights[idx] == 0.0f) {
-            s.line_heights[idx] = s.font_sizes[idx] * 1.2f;
-        }
+        //пока пуст
     }
 
     // =============================================================

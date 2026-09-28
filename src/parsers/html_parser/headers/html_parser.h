@@ -1,4 +1,4 @@
-#pragma once
+п»ї#pragma once
 #include <string>
 #include <vector>
 #include <cctype>
@@ -13,7 +13,7 @@ class HTMLParser {
 public:
     explicit HTMLParser(ArenaAllocator& arena) : arena_(arena) {}
 
-    // Основная точка входа. Можно вызывать многократно на одном объекте.
+    // РћСЃРЅРѕРІРЅР°СЏ С‚РѕС‡РєР° РІС…РѕРґР°. РњРѕР¶РЅРѕ РІС‹Р·С‹РІР°С‚СЊ РјРЅРѕРіРѕРєСЂР°С‚РЅРѕ РЅР° РѕРґРЅРѕРј РѕР±СЉРµРєС‚Рµ.
     DOMNode* parse(const std::string& html) {
         reset(html);
 
@@ -33,22 +33,22 @@ public:
 
 private:
     // ------------------------------------------------------------------
-    //  Состояния токенизатора (по мотивам HTML5)
+    //  РЎРѕСЃС‚РѕСЏРЅРёСЏ С‚РѕРєРµРЅРёР·Р°С‚РѕСЂР° (РїРѕ РјРѕС‚РёРІР°Рј HTML5)
     // ------------------------------------------------------------------
     enum class State {
-        // Текстовые режимы
+        // РўРµРєСЃС‚РѕРІС‹Рµ СЂРµР¶РёРјС‹
         Data,
         RCDATA,
         RAWTEXT,
         ScriptData,
         PLAINTEXT,
 
-        // Обработка тега
+        // РћР±СЂР°Р±РѕС‚РєР° С‚РµРіР°
         TagOpen,
         EndTagOpen,
         TagName,
 
-        // Обнаружение закрывающего тега внутри RCDATA/RAWTEXT/ScriptData
+        // РћР±РЅР°СЂСѓР¶РµРЅРёРµ Р·Р°РєСЂС‹РІР°СЋС‰РµРіРѕ С‚РµРіР° РІРЅСѓС‚СЂРё RCDATA/RAWTEXT/ScriptData
         RCDATALessThanSign,
         RCDATAEndTagOpen,
         RCDATAEndTagName,
@@ -59,7 +59,7 @@ private:
         ScriptDataEndTagOpen,
         ScriptDataEndTagName,
 
-        // Атрибуты
+        // РђС‚СЂРёР±СѓС‚С‹
         BeforeAttributeName,
         AttributeName,
         AfterAttributeName,
@@ -70,7 +70,7 @@ private:
         AfterAttributeValueQuoted,
         SelfClosingStartTag,
 
-        // Комментарии
+        // РљРѕРјРјРµРЅС‚Р°СЂРёРё
         BogusComment,
         MarkupDeclarationOpen,
         CommentStart,
@@ -92,7 +92,7 @@ private:
         CdataSectionBracket,
         CdataSectionEnd,
 
-        // Символьные ссылки
+        // РЎРёРјРІРѕР»СЊРЅС‹Рµ СЃСЃС‹Р»РєРё
         CharacterReference,
         NumericCharacterReferenceStart,
         NumericCharacterReference,
@@ -100,7 +100,7 @@ private:
     };
 
     // ------------------------------------------------------------------
-    //  Данные парсера
+    //  Р”Р°РЅРЅС‹Рµ РїР°СЂСЃРµСЂР°
     // ------------------------------------------------------------------
     ArenaAllocator& arena_;
     std::string html_;
@@ -117,7 +117,7 @@ private:
     std::string current_tag_name_;
     std::string current_attr_name_;
     std::string current_attr_value_;
-    std::string last_start_tag_; // для RCDATA/RAWTEXT — имя открывающего тега
+    std::string last_start_tag_; // РґР»СЏ RCDATA/RAWTEXT вЂ” РёРјСЏ РѕС‚РєСЂС‹РІР°СЋС‰РµРіРѕ С‚РµРіР°
 
     std::vector<DOMNode*> stack_;
     DOMNode* current_node_ = nullptr;
@@ -126,7 +126,7 @@ private:
     bool is_self_closing_ = false;
 
     // ------------------------------------------------------------------
-    //  Наборы тегов
+    //  РќР°Р±РѕСЂС‹ С‚РµРіРѕРІ
     // ------------------------------------------------------------------
     static const std::unordered_set<std::string>& void_elements() {
         static const std::unordered_set<std::string> s = {
@@ -148,7 +148,7 @@ private:
     }
 
     // ------------------------------------------------------------------
-    //  Именованные HTML-сущности (небольшая, но полезная выборка)
+    //  РРјРµРЅРѕРІР°РЅРЅС‹Рµ HTML-СЃСѓС‰РЅРѕСЃС‚Рё (РЅРµР±РѕР»СЊС€Р°СЏ, РЅРѕ РїРѕР»РµР·РЅР°СЏ РІС‹Р±РѕСЂРєР°)
     // ------------------------------------------------------------------
     static const std::unordered_map<std::string, uint32_t>& named_entities() {
         static const std::unordered_map<std::string, uint32_t> m = {
@@ -167,7 +167,7 @@ private:
     }
 
     // ------------------------------------------------------------------
-    //  Сброс состояния
+    //  РЎР±СЂРѕСЃ СЃРѕСЃС‚РѕСЏРЅРёСЏ
     // ------------------------------------------------------------------
     void reset(const std::string& html) {
         html_ = html;
@@ -190,7 +190,7 @@ private:
     }
 
     // ------------------------------------------------------------------
-    //  Утилиты
+    //  РЈС‚РёР»РёС‚С‹
     // ------------------------------------------------------------------
     static bool is_ascii_alpha(char c) { return std::isalpha(static_cast<unsigned char>(c)) != 0; }
     static bool is_ascii_digit(char c) { return std::isdigit(static_cast<unsigned char>(c)) != 0; }
@@ -230,7 +230,7 @@ private:
     }
 
     static uint32_t sanitize_codepoint(uint32_t cp) {
-        // Замена недопустимых кодовых точек на U+FFFD
+        // Р—Р°РјРµРЅР° РЅРµРґРѕРїСѓСЃС‚РёРјС‹С… РєРѕРґРѕРІС‹С… С‚РѕС‡РµРє РЅР° U+FFFD
         if (cp == 0 || cp > 0x10FFFF ||
             (cp >= 0xD800 && cp <= 0xDFFF) ||
             (cp >= 0xFDD0 && cp <= 0xFDEF) ||
@@ -241,7 +241,7 @@ private:
     }
 
     // ------------------------------------------------------------------
-    //  Работа с DOM/стеком
+    //  Р Р°Р±РѕС‚Р° СЃ DOM/СЃС‚РµРєРѕРј
     // ------------------------------------------------------------------
     void flush_text_buffer() {
         if (text_buffer_.empty()) return;
@@ -259,7 +259,7 @@ private:
             buffer_.clear();
             return;
         }
-        // Атрибуты в DOM храним в нижнем регистре
+        // РђС‚СЂРёР±СѓС‚С‹ РІ DOM С…СЂР°РЅРёРј РІ РЅРёР¶РЅРµРј СЂРµРіРёСЃС‚СЂРµ
         std::string name = current_attr_name_;
         for (char& ch : name) ch = to_lower(ch);
         current_node_->attributes[name] = current_attr_value_;
@@ -270,7 +270,7 @@ private:
 
     void emit_tag() {
         if (is_end_tag_) {
-            // Закрывающий тег: ищем соответствующий элемент в стеке
+            // Р—Р°РєСЂС‹РІР°СЋС‰РёР№ С‚РµРі: РёС‰РµРј СЃРѕРѕС‚РІРµС‚СЃС‚РІСѓСЋС‰РёР№ СЌР»РµРјРµРЅС‚ РІ СЃС‚РµРєРµ
             for (size_t i = stack_.size(); i-- > 1; ) {
                 if (stack_[i]->tag_name == current_tag_name_) {
                     stack_.resize(i);
@@ -280,7 +280,7 @@ private:
             state_ = State::Data;
         }
         else {
-            // Переиспользуем current_node_, а не выделяем новый!
+            // РџРµСЂРµРёСЃРїРѕР»СЊР·СѓРµРј current_node_, Р° РЅРµ РІС‹РґРµР»СЏРµРј РЅРѕРІС‹Р№!
             DOMNode* node = current_node_;
             if (!node) {
                 node = arena_.Alloc<DOMNode>();
@@ -295,7 +295,7 @@ private:
                 stack_.push_back(node);
             }
 
-            // Переход в специальный режим текста...
+            // РџРµСЂРµС…РѕРґ РІ СЃРїРµС†РёР°Р»СЊРЅС‹Р№ СЂРµР¶РёРј С‚РµРєСЃС‚Р°...
             if (rcdata_elements().count(current_tag_name_)) {
                 last_start_tag_ = current_tag_name_;
                 state_ = State::RCDATA;
@@ -316,7 +316,7 @@ private:
             }
         }
 
-        // Сброс временных данных
+        // РЎР±СЂРѕСЃ РІСЂРµРјРµРЅРЅС‹С… РґР°РЅРЅС‹С…
         current_node_ = nullptr;
         is_end_tag_ = false;
         is_self_closing_ = false;
@@ -327,6 +327,7 @@ private:
     }
 
     void emit_raw_end_tag(const std::string& tag) {
+        flush_text_buffer();          // в†ђ flush РІ С‚РµРєСѓС‰РёР№ РІРµСЂС…РЅРёР№ СЃС‚РµРє-СЌР»РµРјРµРЅС‚
         for (size_t i = stack_.size(); i-- > 1; ) {
             if (stack_[i]->tag_name == tag) {
                 stack_.resize(i);
@@ -339,7 +340,7 @@ private:
 
     void append_to_current_text(const std::string& s) {
         if (is_attr_value_state(return_state_)) {
-            current_attr_value_ += s;
+            buffer_ += s;
         }
         else {
             text_buffer_ += s;
@@ -351,10 +352,10 @@ private:
     }
 
     // ------------------------------------------------------------------
-    //  Разбор символьных ссылок (&...;)
+    //  Р Р°Р·Р±РѕСЂ СЃРёРјРІРѕР»СЊРЅС‹С… СЃСЃС‹Р»РѕРє (&...;)
     // ------------------------------------------------------------------
     void parse_character_reference() {
-        // pos_ указывает на '&'. Возвращаемся сюда после обработки.
+        // pos_ СѓРєР°Р·С‹РІР°РµС‚ РЅР° '&'. Р’РѕР·РІСЂР°С‰Р°РµРјСЃСЏ СЃСЋРґР° РїРѕСЃР»Рµ РѕР±СЂР°Р±РѕС‚РєРё.
         const size_t amp_pos = pos_;
         size_t i = amp_pos + 1;
         if (i >= html_.size()) {
@@ -362,7 +363,7 @@ private:
             return;
         }
 
-        // Числовая ссылка?
+        // Р§РёСЃР»РѕРІР°СЏ СЃСЃС‹Р»РєР°?
         if (html_[i] == '#') {
             ++i;
             bool hex = false;
@@ -389,17 +390,17 @@ private:
                 ++i;
             }
             if (i == digits_start) {
-                // Нет цифр — не ссылка
+                // РќРµС‚ С†РёС„СЂ вЂ” РЅРµ СЃСЃС‹Р»РєР°
                 append_to_current_text("&");
                 return;
             }
             if (i < html_.size() && html_[i] == ';') ++i;
             append_char(sanitize_codepoint(value));
-            pos_ = i - 1; // внешний цикл сделает ++pos_
+            pos_ = i - 1; // РІРЅРµС€РЅРёР№ С†РёРєР» СЃРґРµР»Р°РµС‚ ++pos_
             return;
         }
 
-        // Именованная ссылка
+        // РРјРµРЅРѕРІР°РЅРЅР°СЏ СЃСЃС‹Р»РєР°
         size_t start = i;
         std::string name;
         const size_t max_len = 32;
@@ -407,28 +408,31 @@ private:
             name += html_[i];
             ++i;
         }
-        // Пробуем найти самую длинную подходящую сущность
+        // РџСЂРѕР±СѓРµРј РЅР°Р№С‚Рё СЃР°РјСѓСЋ РґР»РёРЅРЅСѓСЋ РїРѕРґС…РѕРґСЏС‰СѓСЋ СЃСѓС‰РЅРѕСЃС‚СЊ
         for (size_t len = name.size(); len > 0; --len) {
             auto it = named_entities().find(name.substr(0, len));
             if (it != named_entities().end()) {
                 append_char(it->second);
-                // Позиция после сущности (при желании можно съесть ';')
                 pos_ = start + len - 1;
+                // РЎСЉРµСЃС‚СЊ ';' РµСЃР»Рё РѕРЅ РїСЂРёСЃСѓС‚СЃС‚РІСѓРµС‚
+                if (pos_ + 1 < html_.size() && html_[pos_ + 1] == ';') {
+                    ++pos_;
+                }
                 return;
             }
         }
-        // Не нашли — оставляем '&' как обычный символ
+        // РќРµ РЅР°С€Р»Рё вЂ” РѕСЃС‚Р°РІР»СЏРµРј '&' РєР°Рє РѕР±С‹С‡РЅС‹Р№ СЃРёРјРІРѕР»
         append_to_current_text("&");
     }
 
     // ------------------------------------------------------------------
-    //  Основной шаг токенизации
+    //  РћСЃРЅРѕРІРЅРѕР№ С€Р°Рі С‚РѕРєРµРЅРёР·Р°С†РёРё
     // ------------------------------------------------------------------
     void process_char(char c) {
         switch (state_) {
 
             // =============================================================
-            // DATA — основной текстовый режим
+            // DATA вЂ” РѕСЃРЅРѕРІРЅРѕР№ С‚РµРєСЃС‚РѕРІС‹Р№ СЂРµР¶РёРј
             // =============================================================
         case State::Data:
             if (c == '&') {
@@ -468,7 +472,7 @@ private:
             else {
                 text_buffer_ += '<';
                 if (c == '<') {
-                    // остаёмся в этом же состоянии
+                    // РѕСЃС‚Р°С‘РјСЃСЏ РІ СЌС‚РѕРј Р¶Рµ СЃРѕСЃС‚РѕСЏРЅРёРё
                 }
                 else {
                     text_buffer_ += c;
@@ -520,7 +524,7 @@ private:
             }
             else {
                 text_buffer_ += '<';
-                if (c == '<') { /* остаёмся */ }
+                if (c == '<') { /* РѕСЃС‚Р°С‘РјСЃСЏ */ }
                 else { text_buffer_ += c; state_ = State::RAWTEXT; }
             }
             break;
@@ -554,7 +558,7 @@ private:
             break;
 
             // =============================================================
-            // ScriptData (script) — упрощённый режим без вложенных escape
+            // ScriptData (script) вЂ” СѓРїСЂРѕС‰С‘РЅРЅС‹Р№ СЂРµР¶РёРј Р±РµР· РІР»РѕР¶РµРЅРЅС‹С… escape
             // =============================================================
         case State::ScriptData:
             if (c == '<') state_ = State::ScriptDataLessThanSign;
@@ -568,7 +572,7 @@ private:
             }
             else {
                 text_buffer_ += '<';
-                if (c == '<') { /* остаёмся */ }
+                if (c == '<') { /* РѕСЃС‚Р°С‘РјСЃСЏ */ }
                 else { text_buffer_ += c; state_ = State::ScriptData; }
             }
             break;
@@ -609,7 +613,7 @@ private:
             break;
 
             // =============================================================
-            // Открытие тега
+            // РћС‚РєСЂС‹С‚РёРµ С‚РµРіР°
             // =============================================================
         case State::TagOpen:
             if (c == '!') {
@@ -631,12 +635,12 @@ private:
                 state_ = State::TagName;
             }
             else if (c == '?') {
-                // Обработка <? ... > как bogus comment
+                // РћР±СЂР°Р±РѕС‚РєР° <? ... > РєР°Рє bogus comment
                 state_ = State::BogusComment;
                 comment_buffer_.clear();
             }
             else {
-                // '<' без тега — просто текст
+                // '<' Р±РµР· С‚РµРіР° вЂ” РїСЂРѕСЃС‚Рѕ С‚РµРєСЃС‚
                 text_buffer_ += '<';
                 text_buffer_ += c;
                 state_ = State::Data;
@@ -650,7 +654,7 @@ private:
                 state_ = State::TagName;
             }
             else if (c == '>') {
-                // </> — пустой закрывающий тег, игнорируем
+                // </> вЂ” РїСѓСЃС‚РѕР№ Р·Р°РєСЂС‹РІР°СЋС‰РёР№ С‚РµРі, РёРіРЅРѕСЂРёСЂСѓРµРј
                 state_ = State::Data;
             }
             else {
@@ -682,11 +686,11 @@ private:
             break;
 
             // =============================================================
-            // Атрибуты
+            // РђС‚СЂРёР±СѓС‚С‹
             // =============================================================
         case State::BeforeAttributeName:
             if (is_html_space(c)) {
-                // пропускаем пробелы
+                // РїСЂРѕРїСѓСЃРєР°РµРј РїСЂРѕР±РµР»С‹
             }
             else if (c == '/') {
                 state_ = State::SelfClosingStartTag;
@@ -695,7 +699,7 @@ private:
                 emit_tag();
             }
             else if (c == '=') {
-                // невалидный случай: '=' перед именем атрибута
+                // РЅРµРІР°Р»РёРґРЅС‹Р№ СЃР»СѓС‡Р°Р№: '=' РїРµСЂРµРґ РёРјРµРЅРµРј Р°С‚СЂРёР±СѓС‚Р°
                 buffer_.clear();
                 buffer_ += c;
                 state_ = State::AttributeName;
@@ -711,8 +715,7 @@ private:
             if (is_html_space(c)) {
                 current_attr_name_ = buffer_;
                 buffer_.clear();
-                commit_attribute();
-                state_ = State::AfterAttributeName;
+                state_ = State::AfterAttributeName;   // в†ђ Р‘Р•Р— commit_attribute()
             }
             else if (c == '=') {
                 current_attr_name_ = buffer_;
@@ -722,12 +725,14 @@ private:
             else if (c == '>') {
                 current_attr_name_ = buffer_;
                 buffer_.clear();
+                current_attr_value_.clear();          // boolean attr в†’ РїСѓСЃС‚РѕРµ Р·РЅР°С‡РµРЅРёРµ
                 commit_attribute();
                 emit_tag();
             }
             else if (c == '/') {
                 current_attr_name_ = buffer_;
                 buffer_.clear();
+                current_attr_value_.clear();
                 commit_attribute();
                 state_ = State::SelfClosingStartTag;
             }
@@ -738,18 +743,25 @@ private:
 
         case State::AfterAttributeName:
             if (is_html_space(c)) {
-                // пропускаем
+                // skip
             }
             else if (c == '=') {
                 state_ = State::BeforeAttributeValue;
             }
             else if (c == '>') {
+                current_attr_value_.clear();
+                commit_attribute();
                 emit_tag();
             }
             else if (c == '/') {
+                current_attr_value_.clear();
+                commit_attribute();
                 state_ = State::SelfClosingStartTag;
             }
             else {
+                // РќРѕРІС‹Р№ Р°С‚СЂРёР±СѓС‚ вЂ” С„РёРєСЃРёСЂСѓРµРј РїСЂРµРґС‹РґСѓС‰РёР№ РєР°Рє boolean
+                current_attr_value_.clear();
+                commit_attribute();
                 buffer_.clear();
                 buffer_ += c;
                 state_ = State::AttributeName;
@@ -758,7 +770,7 @@ private:
 
         case State::BeforeAttributeValue:
             if (is_html_space(c)) {
-                // пропускаем
+                // РїСЂРѕРїСѓСЃРєР°РµРј
             }
             else if (c == '"') {
                 buffer_.clear();
@@ -845,7 +857,7 @@ private:
                 emit_tag();
             }
             else {
-                // Невалидный символ — начинаем новый атрибут
+                // РќРµРІР°Р»РёРґРЅС‹Р№ СЃРёРјРІРѕР» вЂ” РЅР°С‡РёРЅР°РµРј РЅРѕРІС‹Р№ Р°С‚СЂРёР±СѓС‚
                 buffer_.clear();
                 buffer_ += c;
                 state_ = State::AttributeName;
@@ -858,18 +870,18 @@ private:
                 emit_tag();
             }
             else if (is_html_space(c)) {
-                // допускается
+                // РґРѕРїСѓСЃРєР°РµС‚СЃСЏ
             }
             else {
-                // Не '>' — возвращаемся к атрибутам
+                // РќРµ '>' вЂ” РІРѕР·РІСЂР°С‰Р°РµРјСЃСЏ Рє Р°С‚СЂРёР±СѓС‚Р°Рј
                 state_ = State::BeforeAttributeName;
-                // Повторно обработать текущий символ
+                // РџРѕРІС‚РѕСЂРЅРѕ РѕР±СЂР°Р±РѕС‚Р°С‚СЊ С‚РµРєСѓС‰РёР№ СЃРёРјРІРѕР»
                 process_char(c);
             }
             break;
 
             // =============================================================
-            // Комментарии
+            // РљРѕРјРјРµРЅС‚Р°СЂРёРё
             // =============================================================
         case State::BogusComment:
             if (c == '>') {
@@ -886,10 +898,10 @@ private:
             break;
 
         case State::MarkupDeclarationOpen:
-            // Мы ожидаем "DOCTYPE", "CDATA[" или "--"
+            // РњС‹ РѕР¶РёРґР°РµРј "DOCTYPE", "CDATA[" РёР»Рё "--"
             if (html_.compare(pos_, 7, "DOCTYPE") == 0 ||
                 html_.compare(pos_, 7, "doctype") == 0) {
-                pos_ += 6; // внешний цикл добавит ещё 1
+                pos_ += 6; // РІРЅРµС€РЅРёР№ С†РёРєР» РґРѕР±Р°РІРёС‚ РµС‰С‘ 1
                 doctype_buffer_.clear();
                 state_ = State::Doctype;
             }
@@ -914,7 +926,7 @@ private:
                 state_ = State::CommentStartDash;
             }
             else if (c == '>') {
-                // <!----> — пустой комментарий
+                // <!----> вЂ” РїСѓСЃС‚РѕР№ РєРѕРјРјРµРЅС‚Р°СЂРёР№
                 DOMNode* node = arena_.Alloc<DOMNode>();
                 node->type = NodeType::Comment;
                 node->text_content = "";
@@ -1025,7 +1037,7 @@ private:
 
         case State::BeforeDoctypeName:
             if (is_html_space(c)) {
-                // пропускаем
+                // РїСЂРѕРїСѓСЃРєР°РµРј
             }
             else if (c == '>') {
                 DOMNode* node = arena_.Alloc<DOMNode>();
@@ -1060,7 +1072,7 @@ private:
 
         case State::AfterDoctypeName:
             if (is_html_space(c)) {
-                // пропускаем
+                // РїСЂРѕРїСѓСЃРєР°РµРј
             }
             else if (c == '>') {
                 DOMNode* node = arena_.Alloc<DOMNode>();
@@ -1071,16 +1083,20 @@ private:
                 state_ = State::Data;
             }
             else {
-                // Игнорируем PUBLIC/SYSTEM — уходим в bogus doctype
+                // РРіРЅРѕСЂРёСЂСѓРµРј PUBLIC/SYSTEM вЂ” СѓС…РѕРґРёРј РІ bogus doctype
                 state_ = State::BogusDoctype;
             }
             break;
 
         case State::BogusDoctype:
             if (c == '>') {
+                DOMNode* node = arena_.Alloc<DOMNode>();
+                node->type = NodeType::Doctype;
+                node->text_content = doctype_buffer_;
+                if (!stack_.empty()) stack_.back()->add_child(node);
+                doctype_buffer_.clear();
                 state_ = State::Data;
             }
-            // иначе игнорируем
             break;
 
             // =============================================================
@@ -1121,14 +1137,14 @@ private:
             break;
 
             // =============================================================
-            // Заглушки для состояний, обрабатываемых в parse_character_reference
+            // Р—Р°РіР»СѓС€РєРё РґР»СЏ СЃРѕСЃС‚РѕСЏРЅРёР№, РѕР±СЂР°Р±Р°С‚С‹РІР°РµРјС‹С… РІ parse_character_reference
             // =============================================================
         case State::CharacterReference:
         case State::NumericCharacterReferenceStart:
         case State::NumericCharacterReference:
         case State::NumericCharacterReferenceEnd:
-            // Эти состояния обрабатываются вне основного цикла —
-            // сюда мы попадать не должны.
+            // Р­С‚Рё СЃРѕСЃС‚РѕСЏРЅРёСЏ РѕР±СЂР°Р±Р°С‚С‹РІР°СЋС‚СЃСЏ РІРЅРµ РѕСЃРЅРѕРІРЅРѕРіРѕ С†РёРєР»Р° вЂ”
+            // СЃСЋРґР° РјС‹ РїРѕРїР°РґР°С‚СЊ РЅРµ РґРѕР»Р¶РЅС‹.
             state_ = State::Data;
             break;
         }
