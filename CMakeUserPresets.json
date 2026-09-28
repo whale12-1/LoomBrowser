@@ -37,6 +37,9 @@
       "hidden": true,
       "name": "Qt6MSVC",
       "inherits": "Qt",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "C:/vcpkg/scripts/buildsystems/vcpkg.cmake"
+      },
       "environment": {
         "QTDIR": "C:/vcpkg/installed/x64-windows"
       },

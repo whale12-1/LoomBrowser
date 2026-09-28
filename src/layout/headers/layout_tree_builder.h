@@ -1,4 +1,4 @@
-#pragma once
+п»ї#pragma once
 
 #include <memory>
 #include <unordered_map>
@@ -15,13 +15,13 @@
 class LayoutTreeBuilder {
 public:
     // =================================================================
-    //  Phase 1: построение чистого Layout-дерева из SoA + DOM
+    //  Phase 1: РїРѕСЃС‚СЂРѕРµРЅРёРµ С‡РёСЃС‚РѕРіРѕ Layout-РґРµСЂРµРІР° РёР· SoA + DOM
     // =================================================================
     static std::unique_ptr<LayoutNode> build(const StyleStorageSoA& storage) {
         if (storage.size() == 0) return nullptr;
 
-        // Обратный индекс DOMNode* -> soa_idx, чтобы из DOM-детей быстро
-        // попадать в SoA-стили. O(N).
+        // РћР±СЂР°С‚РЅС‹Р№ РёРЅРґРµРєСЃ DOMNode* -> soa_idx, С‡С‚РѕР±С‹ РёР· DOM-РґРµС‚РµР№ Р±С‹СЃС‚СЂРѕ
+        // РїРѕРїР°РґР°С‚СЊ РІ SoA-СЃС‚РёР»Рё. O(N).
         std::unordered_map<const DOMNode*, uint32_t> dom_to_soa;
         dom_to_soa.reserve(storage.size() * 2);
         for (uint32_t i = 0; i < storage.size(); ++i) {
@@ -37,7 +37,7 @@ public:
     }
 
     // =================================================================
-    //  Phase 2: BFC layout. initial_parent_width — обычно ширина viewport'а.
+    //  Phase 2: BFC layout. initial_parent_width вЂ” РѕР±С‹С‡РЅРѕ С€РёСЂРёРЅР° viewport'Р°.
     // =================================================================
     static void compute_layout(LayoutNode* root, float initial_parent_width,
         const StyleStorageSoA& storage)
@@ -49,14 +49,14 @@ public:
 
 private:
     // -----------------------------------------------------------------
-    //  Phase 1: построение
+    //  Phase 1: РїРѕСЃС‚СЂРѕРµРЅРёРµ
     // -----------------------------------------------------------------
     static std::unique_ptr<LayoutNode> build_node(
         uint32_t soa_idx,
         const StyleStorageSoA& storage,
         const std::unordered_map<const DOMNode*, uint32_t>& dom_to_soa)
     {
-        // Шаг 1: display:none — пропускаем узел и всех потомков
+        // РЁР°Рі 1: display:none вЂ” РїСЂРѕРїСѓСЃРєР°РµРј СѓР·РµР» Рё РІСЃРµС… РїРѕС‚РѕРјРєРѕРІ
         if (storage.displays[soa_idx] == Display::None) return nullptr;
 
         const DOMNode* dom = storage.dom_nodes[soa_idx];
@@ -66,18 +66,21 @@ private:
         node->style_soa_idx = soa_idx;
         node->type = classify_box(storage.displays[soa_idx]);
 
-        // Шаг 3: рекурсивно обходим DOM-детей, чтобы сохранить порядок
-        // текстовых и элементных узлов (нужен для корректной обёртки
-        // inline-ранов в анонимные блоки).
+        // РЁР°Рі 3: СЂРµРєСѓСЂСЃРёРІРЅРѕ РѕР±С…РѕРґРёРј DOM-РґРµС‚РµР№, С‡С‚РѕР±С‹ СЃРѕС…СЂР°РЅРёС‚СЊ РїРѕСЂСЏРґРѕРє
+        // С‚РµРєСЃС‚РѕРІС‹С… Рё СЌР»РµРјРµРЅС‚РЅС‹С… СѓР·Р»РѕРІ (РЅСѓР¶РµРЅ РґР»СЏ РєРѕСЂСЂРµРєС‚РЅРѕР№ РѕР±С‘СЂС‚РєРё
+        // inline-СЂР°РЅРѕРІ РІ Р°РЅРѕРЅРёРјРЅС‹Рµ Р±Р»РѕРєРё).
         for (const DOMNode* child_dom : dom->children) {
             if (!child_dom) continue;
+
+            if (child_dom->type == NodeType::Element &&
+                isNonRendered(child_dom->tag_name)) continue;
 
             if (child_dom->type == NodeType::Text) {
                 if (!has_visible_text(child_dom->text_content)) continue;
 
                 auto text = std::make_unique<LayoutNode>();
                 text->type = BoxType::Text;
-                text->style_soa_idx = UINT32_MAX;   // стили унаследуются
+                text->style_soa_idx = UINT32_MAX;   // СЃС‚РёР»Рё СѓРЅР°СЃР»РµРґСѓСЋС‚СЃСЏ
                 text->text_content = child_dom->text_content;
                 node->add_child(std::move(text));
             }
@@ -97,7 +100,16 @@ private:
         return false;
     }
 
-    // Шаг 2: display -> BoxType
+    // Р­Р»РµРјРµРЅС‚С‹, РєРѕС‚РѕСЂС‹Рµ РЅРµ СЃРѕР·РґР°СЋС‚ layout-СѓР·Р»РѕРІ Рё РЅРµ СЂРµРЅРґРµСЂСЏС‚СЃСЏ.
+// РС… СЃРѕРґРµСЂР¶РёРјРѕРµ Р»РёР±Рѕ СЃР»СѓР¶РµР±РЅРѕРµ (title, meta), Р»РёР±Рѕ РїСЂРµРґРЅР°Р·РЅР°С‡РµРЅРѕ
+// РґР»СЏ РґСЂСѓРіРёС… РїРѕРґСЃРёСЃС‚РµРј (style в†’ CSS, script в†’ JS).
+    static bool isNonRendered(const std::string& tag) {
+        return tag == "head" || tag == "style" || tag == "script" ||
+            tag == "title" || tag == "meta" || tag == "link" ||
+            tag == "base" || tag == "noscript" || tag == "template";
+    }
+
+    // РЁР°Рі 2: display -> BoxType
     static BoxType classify_box(Display d) {
         switch (d) {
         case Display::Block:
@@ -116,20 +128,20 @@ private:
             return BoxType::Inline;
 
         case Display::None:
-            break; // недостижимо — отфильтровано в build_node
+            break; // РЅРµРґРѕСЃС‚РёР¶РёРјРѕ вЂ” РѕС‚С„РёР»СЊС‚СЂРѕРІР°РЅРѕ РІ build_node
         }
         return BoxType::Block;
     }
 
     // -----------------------------------------------------------------
-    //  Шаг 3 (по ТЗ): анонимные блоки
-    //  Если у Block есть одновременно inline/text и block дети —
-    //  подряд идущие inline/text оборачиваются в AnonymousBlock.
+    //  РЁР°Рі 3 (РїРѕ РўР—): Р°РЅРѕРЅРёРјРЅС‹Рµ Р±Р»РѕРєРё
+    //  Р•СЃР»Рё Сѓ Block РµСЃС‚СЊ РѕРґРЅРѕРІСЂРµРјРµРЅРЅРѕ inline/text Рё block РґРµС‚Рё вЂ”
+    //  РїРѕРґСЂСЏРґ РёРґСѓС‰РёРµ inline/text РѕР±РѕСЂР°С‡РёРІР°СЋС‚СЃСЏ РІ AnonymousBlock.
     // -----------------------------------------------------------------
     static void wrap_anonymous_blocks(LayoutNode* node) {
         if (!node) return;
 
-        // Сначала — рекурсивно вглубь
+        // РЎРЅР°С‡Р°Р»Р° вЂ” СЂРµРєСѓСЂСЃРёРІРЅРѕ РІРіР»СѓР±СЊ
         for (auto& c : node->children) wrap_anonymous_blocks(c.get());
 
         if (node->type != BoxType::Block) return;
@@ -139,7 +151,7 @@ private:
             if (c->is_inline_level()) has_inline = true;
             else if (c->is_block_level()) has_block = true;
         }
-        if (!has_inline || !has_block) return;  // смешивания нет — не трогаем
+        if (!has_inline || !has_block) return;  // СЃРјРµС€РёРІР°РЅРёСЏ РЅРµС‚ вЂ” РЅРµ С‚СЂРѕРіР°РµРј
 
         std::vector<std::unique_ptr<LayoutNode>> out;
         out.reserve(node->children.size());
@@ -172,8 +184,8 @@ private:
     //  Phase 2: BFC layout
     // -----------------------------------------------------------------
 
-    // Возвращает реальный style-index, поднимаясь по предкам от
-    // AnonymousBlock/Text к ближайшему Block/Inline.
+    // Р’РѕР·РІСЂР°С‰Р°РµС‚ СЂРµР°Р»СЊРЅС‹Р№ style-index, РїРѕРґРЅРёРјР°СЏСЃСЊ РїРѕ РїСЂРµРґРєР°Рј РѕС‚
+    // AnonymousBlock/Text Рє Р±Р»РёР¶Р°Р№С€РµРјСѓ Block/Inline.
     static uint32_t effective_style_idx(const LayoutNode* node) {
         for (const LayoutNode* n = node; n; n = n->parent) {
             if (n->style_soa_idx != UINT32_MAX) return n->style_soa_idx;
@@ -207,7 +219,7 @@ private:
         case Unit::Em:      return l.value * font_size;
         case Unit::Rem:     return l.value * root_fs;
         case Unit::Percent: return l.value * 0.01f * percentage_base;
-        case Unit::Vw:      return l.value * 0.01f * 1920.0f; // TODO: реальный viewport
+        case Unit::Vw:      return l.value * 0.01f * 1920.0f; // TODO: СЂРµР°Р»СЊРЅС‹Р№ viewport
         case Unit::Vh:      return l.value * 0.01f * 1080.0f;
         case Unit::Vmin:    return l.value * 0.01f * std::min(1920.0f, 1080.0f);
         case Unit::Vmax:    return l.value * 0.01f * std::max(1920.0f, 1080.0f);
@@ -245,7 +257,7 @@ private:
         g.border_left = resolve_px(storage.border_left_width[si], fs, root_fs, parent_width);
     }
 
-    // --- Block container: вертикальный стек детей ---
+    // --- Block container: РІРµСЂС‚РёРєР°Р»СЊРЅС‹Р№ СЃС‚РµРє РґРµС‚РµР№ ---
     static void layout_block_container(LayoutNode* node, float parent_width,
         const StyleStorageSoA& storage, float root_fs)
     {
@@ -253,7 +265,7 @@ private:
         const bool is_real = (node->type == BoxType::Block);
 
         if (is_real) resolve_box_model(node, storage, parent_width, root_fs);
-        // У AnonymousBlock margin/padding/border остаются 0.
+        // РЈ AnonymousBlock margin/padding/border РѕСЃС‚Р°СЋС‚СЃСЏ 0.
 
         const float h_extra = g.margin_left + g.margin_right
             + g.padding_left + g.padding_right
@@ -275,7 +287,7 @@ private:
             }
         }
 
-        // Layout детей (block flow — друг под другом)
+        // Layout РґРµС‚РµР№ (block flow вЂ” РґСЂСѓРі РїРѕРґ РґСЂСѓРіРѕРј)
         const float inner_x = g.border_left + g.padding_left;
         const float inner_y = g.border_top + g.padding_top;
 
@@ -316,7 +328,7 @@ private:
             + g.padding_bottom + g.border_bottom;
     }
 
-    // --- Inline: упрощённо — shrink-to-fit, дети в строку ---
+    // --- Inline: СѓРїСЂРѕС‰С‘РЅРЅРѕ вЂ” shrink-to-fit, РґРµС‚Рё РІ СЃС‚СЂРѕРєСѓ ---
     static void layout_inline(LayoutNode* node, float parent_width,
         const StyleStorageSoA& storage, float root_fs)
     {
@@ -334,7 +346,7 @@ private:
         const float inner_x = g.border_left + g.padding_left;
         const float inner_y = g.border_top + g.padding_top;
 
-        // Сначала разложить детей, чтобы узнать их ширины
+        // РЎРЅР°С‡Р°Р»Р° СЂР°Р·Р»РѕР¶РёС‚СЊ РґРµС‚РµР№, С‡С‚РѕР±С‹ СѓР·РЅР°С‚СЊ РёС… С€РёСЂРёРЅС‹
         float cursor_x = 0.0f;
         float max_h = 0.0f;
         for (auto& child : node->children) {
@@ -350,7 +362,7 @@ private:
                 + child->geometry.margin_bottom);
         }
 
-        // content_width: явная или shrink-to-fit
+        // content_width: СЏРІРЅР°СЏ РёР»Рё shrink-to-fit
         float content_width;
         const style::Length& w = storage.widths[si];
         if (!w.is_auto() && !w.is_none()) {
@@ -371,17 +383,15 @@ private:
             + g.padding_bottom + g.border_bottom;
     }
 
-    // --- Text: однострочный расчёт + грубая оценка переносов ---
+    // --- Text: РѕРґРЅРѕСЃС‚СЂРѕС‡РЅС‹Р№ СЂР°СЃС‡С‘С‚ + РіСЂСѓР±Р°СЏ РѕС†РµРЅРєР° РїРµСЂРµРЅРѕСЃРѕРІ ---
     static void layout_text(LayoutNode* node, float parent_width,
         const StyleStorageSoA& storage, float root_fs)
     {
         const uint32_t si = effective_style_idx(node);
         const float fs = storage.font_sizes[si];
-        const float lh = storage.line_heights[si] > 0.0f
-            ? storage.line_heights[si]
-            : fs * 1.2f;
+        const float lh = style::resolve_line_height(storage, si);
 
-        // Заглушка для метрик шрифта — 0.5 * font-size на символ.
+        // Р—Р°РіР»СѓС€РєР° РґР»СЏ РјРµС‚СЂРёРє С€СЂРёС„С‚Р° вЂ” 0.5 * font-size РЅР° СЃРёРјРІРѕР».
         const float char_w = std::max(1.0f, fs * 0.5f);
         const float one_line_w = node->text_content.size() * char_w;
 
@@ -395,6 +405,6 @@ private:
             node->geometry.width = one_line_w;
             node->geometry.height = lh;
         }
-        // margin/padding/border остаются 0 (initial значения).
+        // margin/padding/border РѕСЃС‚Р°СЋС‚СЃСЏ 0 (initial Р·РЅР°С‡РµРЅРёСЏ).
     }
 };

@@ -1,40 +1,64 @@
-cmake_minimum_required(VERSION 3.20)
+Ôªøcmake_minimum_required(VERSION 3.20)
 project(ToyBrowserEngine LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# --- Õ¿—“–Œ… »  ŒÃœ»Àﬂ“Œ–¿ ---
-# Œ·‡·ÓÚÍ‡ ÍËËÎÎËˆ˚ ‚ ÍÓ‰Â ‰Îˇ MSVC
+# --- –ù–ê–°–¢–†–û–ô–ö–ò –ö–û–ú–ü–ò–õ–Ø–¢–û–†–ê ---
 if(MSVC)
     add_compile_options(/utf-8)
 endif()
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     add_compile_options(-Wall -Wextra -Wpedantic)
-    # AddressSanitizer ‰Îˇ ÓÚÎ‡‰ÍË ‡·ÓÚ˚ Ò Ô‡ÏˇÚ¸˛ ‚ Debug
     set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -fsanitize=address,undefined -fno-omit-frame-pointer")
     set(CMAKE_EXE_LINKER_FLAGS_DEBUG "${CMAKE_EXE_LINKER_FLAGS_DEBUG} -fsanitize=address,undefined")
 endif()
 
-# --- ¬ ”◊¿≈Ã ¿¬“ŒÃ¿“»◊≈— ”ﬁ √≈Õ≈–¿÷»ﬁ Ã≈“¿-Œ¡⁄≈ “Œ¬ QT ---
+# --- –ê–í–¢–û–ú–ê–¢–ò–ß–ï–°–ö–ê–Ø –ì–ï–ù–ï–†–ê–¶–ò–Ø –ú–ï–¢–ê-–û–ë–™–ï–ö–¢–û–í QT ---
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
-# --- œŒ»—  œ¿ ≈“Œ¬ QT6 » —»—“≈ÃÕ€’ ¡»¡À»Œ“≈  ---
+# --- –ü–û–ò–°–ö –ü–ê–ö–ï–¢–û–í QT6 –ò –°–ò–°–¢–ï–ú–ù–´–• –ë–ò–ë–õ–ò–û–¢–ï–ö ---
 find_package(Qt6 REQUIRED COMPONENTS Widgets OpenGLWidgets Network WebSockets)
 find_package(OpenGL REQUIRED)
 find_package(Freetype REQUIRED)
 
-# --- œŒƒ Àﬁ◊≈Õ»≈ —“Œ–OÕÕ»’ «¿¬»—»ÃŒ—“≈… ---
-# QuickJS ÔÓ‰ÍÎ˛˜‡ÂÚÒˇ Í‡Í C-ÔÓ‰ÔÓÂÍÚ ‚ Ô‡ÔÍÂ third_party
+# --- OPENSSL 3.x (–¥–ª—è TLS –≤ Qt Network) ---
+if(WIN32)
+    if(NOT DEFINED OPENSSL_ROOT_DIR)
+        set(OPENSSL_ROOT_DIR "C:/Program Files/OpenSSL-Win64")
+    endif()
+endif()
+
+find_package(OpenSSL REQUIRED)
+
+message(STATUS "OpenSSL version: ${OPENSSL_VERSION}")
+message(STATUS "OpenSSL root:    ${OPENSSL_ROOT_DIR}")
+
+# --- –ü–û–î–ö–õ–Æ–ß–ï–ù–ò–ï –°–¢–û–†–û–ù–ù–ò–• –ó–ê–í–ò–°–ò–ú–û–°–¢–ï–ô ---
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/quickjs/CMakeLists.txt")
     add_subdirectory(third_party/quickjs EXCLUDE_FROM_ALL)
 endif()
 
-# --- œ”“» œŒ»— ¿ «¿√ŒÀŒ¬Œ◊Õ€’ ‘¿…ÀŒ¬ ---
-include_directories(
+# --- –°–ë–û–† –°–£–©–ï–°–¢–í–£–Æ–©–ò–• –ò–°–•–û–î–ù–ò–ö–û–í –î–í–ò–ñ–ö–ê ---
+file(GLOB_RECURSE CORE_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.ui"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.qrc"
+)
+
+# –ò—Å–∫–ª—é—á–∞–µ–º —Å–ª—É–∂–µ–±–Ω—ã–µ —Ñ–∞–π–ª—ã CMake –∏ –ø–∞–ø–∫—É –±–∏–ª–¥–∞
+list(FILTER CORE_SOURCES EXCLUDE REGEX "${CMAKE_CURRENT_SOURCE_DIR}/out/.*")
+list(FILTER CORE_SOURCES EXCLUDE REGEX "${CMAKE_CURRENT_SOURCE_DIR}/build/.*")
+list(FILTER CORE_SOURCES EXCLUDE REGEX "CMakeCXXCompilerId\\.cpp$")
+
+# --- 1. –Ø–î–†–û –î–í–ò–ñ–ö–ê (–°–¢–ê–¢–ò–ß–ï–°–ö–ê–Ø –ë–ò–ë–õ–ò–û–¢–ï–ö–ê) ---
+add_library(ToyBrowserCore STATIC ${CORE_SOURCES})
+
+target_include_directories(ToyBrowserCore PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/net
     ${CMAKE_CURRENT_SOURCE_DIR}/src/parsers
@@ -45,44 +69,32 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/widgets
 )
 
-# --- ¿¬“ŒÃ¿“»◊≈— »… —¡Œ– »—’ŒƒÕ» Œ¬ ---
-file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.h"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.ui"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.qrc"
-)
-
-# »ÒÍÎ˛˜‡ÂÏ ÒÎÛÊÂ·Ì˚Â Ù‡ÈÎ˚ CMake Ë Ô‡ÔÍÛ ·ËÎ‰‡
-list(FILTER SOURCES EXCLUDE REGEX "${CMAKE_CURRENT_SOURCE_DIR}/out/.*")
-list(FILTER SOURCES EXCLUDE REGEX "${CMAKE_CURRENT_SOURCE_DIR}/build/.*")
-list(FILTER SOURCES EXCLUDE REGEX "CMakeCXXCompilerId\\.cpp$")
-
-# --- —¡Œ– ¿ »—œŒÀÕﬂ≈ÃŒ√Œ ‘¿…À¿ ---
-add_executable(ToyBrowserEngine ${SOURCES} apps/main.cpp)
-
-# —Ò˚Î‡ÂÏÒˇ Ì‡ ÏÓ‰ÛÎË Qt6, OpenGL, FreeType Ë QuickJS
-target_link_libraries(ToyBrowserEngine PRIVATE 
+target_link_libraries(ToyBrowserCore PUBLIC 
     Qt6::Widgets 
     Qt6::OpenGLWidgets
     Qt6::Network 
     Qt6::WebSockets
     OpenGL::GL
     Freetype::Freetype
+    OpenSSL::SSL
+    OpenSSL::Crypto
 )
 
 if(TARGET quickjs)
-    target_link_libraries(ToyBrowserEngine PRIVATE quickjs)
+    target_link_libraries(ToyBrowserCore PUBLIC quickjs)
 endif()
 
-# --- Õ¿—“–Œ… ¿ œ”“≈… ¬€¬Œƒ¿ ---
+# --- 2. –ì–õ–ê–í–ù–´–ô –ò–°–ü–û–õ–ù–Ø–ï–ú–´–ô –§–ê–ô–õ –ü–†–ò–õ–û–ñ–ï–ù–ò–Ø ---
+add_executable(ToyBrowserEngine apps/main.cpp)
+target_link_libraries(ToyBrowserEngine PRIVATE ToyBrowserCore)
+
 set_target_properties(ToyBrowserEngine PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/Release"
     RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/Debug"
 )
 
-# --- ¿¬“ŒÃ¿“»◊≈— Œ≈  Œœ»–Œ¬¿Õ»≈ œÀ¿√»ÕŒ¬ œÀ¿“‘Œ–Ã€ QT (VCPKG) ---
+# --- –ê–í–¢–û–ö–û–ü–ò–†–û–í–ê–ù–ò–ï –ü–õ–ê–ì–ò–ù–û–í QT (platforms –∏ tls) ---
 if(DEFINED VCPKG_INSTALLED_DIR)
     set(QT_PLUGINS_DIR "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/qt6/plugins")
     if(NOT EXISTS "${QT_PLUGINS_DIR}/platforms")
@@ -91,15 +103,61 @@ if(DEFINED VCPKG_INSTALLED_DIR)
 
     add_custom_command(TARGET ToyBrowserEngine POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${QT_PLUGINS_DIR}/platforms"
-        "$<TARGET_FILE_DIR:ToyBrowserEngine>/platforms"
-        COMMENT "Copying Qt platform plugins to output directory..."
+            "${QT_PLUGINS_DIR}/platforms"
+            "$<TARGET_FILE_DIR:ToyBrowserEngine>/platforms"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${QT_PLUGINS_DIR}/tls"
+            "$<TARGET_FILE_DIR:ToyBrowserEngine>/tls"
+        COMMENT "Copying Qt platform & TLS plugins to output directory..."
     )
 endif()
 
-# ŒÍÌÓ ·ÂÁ ÍÓÌÒÓÎË ‰Îˇ Windows ‚ Release-Ò·ÓÍÂ
+# –ê–≤—Ç–æ–º–∞—Ç–∏—á–µ—Å–∫–æ–µ –∫–æ–ø–∏—Ä–æ–≤–∞–Ω–∏–µ –∑–∞–≤–∏—Å–∏–º—ã—Ö DLL
+if(WIN32 AND CMAKE_VERSION VERSION_GREATER_EQUAL "3.21")
+    add_custom_command(TARGET ToyBrowserEngine POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:ToyBrowserEngine>
+            $<TARGET_FILE_DIR:ToyBrowserEngine>
+        COMMAND_EXPAND_LISTS
+        COMMENT "Copying runtime DLLs to target directory..."
+    )
+endif()
+
 if(WIN32)
     set_target_properties(ToyBrowserEngine PROPERTIES
         WIN32_EXECUTABLE OFF
     )
+endif()
+
+# --- 3. –ü–û–î–ö–õ–Æ–ß–ï–ù–ò–ï CATCH2 –¢–ï–°–¢–û–í ---
+include(CTest)
+if(BUILD_TESTING)
+    add_subdirectory(tests)
+endif()
+
+# --- –Ø–í–ù–û–ï –ö–û–ü–ò–†–û–í–ê–ù–ò–ï OpenSSL DLL –ò–ó –ü–ê–ü–ö–ò –£–°–¢–ê–ù–û–í–ö–ò ---
+if(WIN32 AND TARGET ToyBrowserEngine)
+    # –ü–æ–∏—Å–∫ DLL –≤ –∫–æ—Ä–Ω–µ OpenSSL –∏ –≤ –ø–∞–ø–µ bin/
+    find_file(OPENSSL_SSL_DLL 
+        NAMES libssl-3-x64.dll libssl-3.dll
+        PATHS "C:/Program Files/OpenSSL-Win64" "C:/Program Files/OpenSSL-Win64/bin"
+        NO_DEFAULT_PATH
+    )
+    find_file(OPENSSL_CRYPTO_DLL 
+        NAMES libcrypto-3-x64.dll libcrypto-3.dll
+        PATHS "C:/Program Files/OpenSSL-Win64" "C:/Program Files/OpenSSL-Win64/bin"
+        NO_DEFAULT_PATH
+    )
+
+    if(OPENSSL_SSL_DLL AND OPENSSL_CRYPTO_DLL)
+        add_custom_command(TARGET ToyBrowserEngine POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${OPENSSL_SSL_DLL}"
+                "${OPENSSL_CRYPTO_DLL}"
+                "$<TARGET_FILE_DIR:ToyBrowserEngine>"
+            COMMENT "Copying OpenSSL DLLs (${OPENSSL_SSL_DLL}) ‚Üí $<TARGET_FILE_DIR:ToyBrowserEngine>"
+        )
+    else()
+        message(WARNING "Could not find OpenSSL DLLs to copy!")
+    endif()
 endif()
