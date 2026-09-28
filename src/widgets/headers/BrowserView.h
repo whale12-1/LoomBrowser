@@ -1,16 +1,30 @@
-#include <QApplication>
-#include <QOpenGLWidget>
-#include <QOpenGLFunctions>
+п»ї#pragma once
 
-class BrowserView : public QOpenGLWidget, protected QOpenGLFunctions {
+#include <QWidget>
+#include <QScrollArea>
+
+#include "../parsers/selector_matcher/display_list.h"
+
+class BrowserCanvas : public QWidget {
+public:
+    explicit BrowserCanvas(QWidget* parent = nullptr);
+
+    void setDisplayList(const DisplayList& list);
+
 protected:
-    void initializeGL() override {
-        initializeOpenGLFunctions();
-        glClearColor(0.9f, 0.9f, 0.9f, 1.0f); // Светло-серый фон
-    }
+    void paintEvent(QPaintEvent*) override;
 
-    void paintGL() override {
-        glClear(GL_COLOR_BUFFER_BIT);
-        // Позже здесь будет вызов DisplayListRenderer
-    }
+private:
+    DisplayList list_;
+};
+
+class BrowserView : public QScrollArea {
+public:
+    explicit BrowserView(QWidget* parent = nullptr);
+
+    void setDisplayList(const DisplayList& list);
+    BrowserCanvas* canvas() const { return canvas_; }
+
+private:
+    BrowserCanvas* canvas_{};
 };
