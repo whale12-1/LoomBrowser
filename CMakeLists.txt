@@ -38,8 +38,41 @@ message(STATUS "OpenSSL version: ${OPENSSL_VERSION}")
 message(STATUS "OpenSSL root:    ${OPENSSL_ROOT_DIR}")
 
 # --- ПОДКЛЮЧЕНИЕ СТОРОННИХ ЗАВИСИМОСТЕЙ ---
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/quickjs/CMakeLists.txt")
+# --- ПОДКЛЮЧЕНИЕ QUICKJS ---
+set(QUICKJS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/quickjs")
+
+if(EXISTS "${QUICKJS_DIR}/CMakeLists.txt")
+    message(STATUS "QuickJS: found CMakeLists at ${QUICKJS_DIR}")
     add_subdirectory(third_party/quickjs EXCLUDE_FROM_ALL)
+
+    # Ищем любой из известных target-имён
+    if(TARGET quickjs)
+        message(STATUS "QuickJS: target 'quickjs' available")
+        set(_qjs_target quickjs)
+    elseif(TARGET quickjs-ng)
+        message(STATUS "QuickJS: target 'quickjs-ng' available")
+        set(_qjs_target quickjs-ng)
+    elseif(TARGET qjs)
+        message(STATUS "QuickJS: target 'qjs' available")
+        set(_qjs_target qjs)
+    else()
+        message(WARNING "QuickJS: no known target found. "
+                        "Check third_party/quickjs/CMakeLists.txt for add_library name.")
+        set(_qjs_target "")
+    endif()
+else()
+    message(WARNING "QuickJS: ${QUICKJS_DIR}/CMakeLists.txt NOT FOUND")
+    set(_qjs_target "")
+endif()
+
+# Где лежит quickjs.h
+file(GLOB_RECURSE QUICKJS_HEADER "${QUICKJS_DIR}/quickjs.h")
+if(QUICKJS_HEADER)
+    list(GET QUICKJS_HEADER 0 _qjs_hdr)
+    get_filename_component(_qjs_include_dir "${_qjs_hdr}" DIRECTORY)
+    message(STATUS "QuickJS: header found at ${_qjs_hdr}")
+else()
+    message(WARNING "QuickJS: quickjs.h NOT FOUND anywhere in ${QUICKJS_DIR}")
 endif()
 
 # --- СБОР СУЩЕСТВУЮЩИХ ИСХОДНИКОВ ДВИЖКА ---
@@ -57,6 +90,18 @@ list(FILTER CORE_SOURCES EXCLUDE REGEX "CMakeCXXCompilerId\\.cpp$")
 
 # --- 1. ЯДРО ДВИЖКА (СТАТИЧЕСКАЯ БИБЛИОТЕКА) ---
 add_library(ToyBrowserCore STATIC ${CORE_SOURCES})
+
+# --- Гарантированный проброс include-пути ---
+if(QUICKJS_HEADER)
+    # _qjs_include_dir уже вычислен выше
+    target_include_directories(ToyBrowserCore PUBLIC "${_qjs_include_dir}")
+endif()
+
+# --- Гарантированная линковка ---
+if(_qjs_target)
+    target_link_libraries(ToyBrowserCore PUBLIC ${_qjs_target})
+endif()
+
 
 target_include_directories(ToyBrowserCore PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -80,9 +125,6 @@ target_link_libraries(ToyBrowserCore PUBLIC
     OpenSSL::Crypto
 )
 
-if(TARGET quickjs)
-    target_link_libraries(ToyBrowserCore PUBLIC quickjs)
-endif()
 
 # --- 2. ГЛАВНЫЙ ИСПОЛНЯЕМЫЙ ФАЙЛ ПРИЛОЖЕНИЯ ---
 add_executable(ToyBrowserEngine apps/main.cpp)

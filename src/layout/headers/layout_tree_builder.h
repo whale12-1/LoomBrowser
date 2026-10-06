@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cctype>
 #include <cmath>
+#include <functional>
 #include <algorithm>
 
 #include "layout_node.h"
@@ -20,14 +21,34 @@ public:
         float width = 1024.0f;
         float height = 768.0f;
     };
+
     // =================================================================
-    //  Phase 1: построение чистого Layout-дерева из SoA + DOM
+    //  Абстракция текстовых метрик.
+    //  LayoutTreeBuilder не знает о Qt. Если нужно точное совпадение с
+    //  растеризатором (QPainter), владелец layout'а передаёт колбэки,
+    //  которые дергают QFontMetricsF. Если колбэки не заданы — работает
+    //  грубая эвристика (0.55 * font_size на символ, line-height = 1.2*fs).
+    // =================================================================
+    struct TextMetrics {
+        // Ширина одной строки текста в px.
+        std::function<float(const std::string& text,
+            float font_size,
+            bool  bold)> measure_width;
+
+        // Высота одной строки при line-height: normal.
+        std::function<float(float font_size,
+            bool  bold)> line_spacing;
+
+        bool hasWidth()  const { return static_cast<bool>(measure_width); }
+        bool hasHeight() const { return static_cast<bool>(line_spacing); }
+    };
+
+    // =================================================================
+    //  Phase 1
     // =================================================================
     static std::unique_ptr<LayoutNode> build(const StyleStorageSoA& storage) {
         if (storage.size() == 0) return nullptr;
 
-        // Обратный индекс DOMNode* -> soa_idx, чтобы из DOM-детей быстро
-        // попадать в SoA-стили. O(N).
         std::unordered_map<const DOMNode*, uint32_t> dom_to_soa;
         dom_to_soa.reserve(storage.size() * 2);
         for (uint32_t i = 0; i < storage.size(); ++i) {
@@ -43,14 +64,16 @@ public:
     }
 
     // =================================================================
-    //  Phase 2: BFC layout. initial_parent_width — обычно ширина viewport'а.
+    //  Phase 2
     // =================================================================
     static void compute_layout(LayoutNode* root, const Viewport& viewport,
-        const StyleStorageSoA& storage)
+        const StyleStorageSoA& storage,
+        const TextMetrics& metrics = {})
     {
         if (!root) return;
-        const float root_fs = storage.font_sizes.empty() ? 16.0f : storage.font_sizes[0];
-        layout_node(root, viewport.width, viewport, storage, root_fs);
+        const float root_fs = storage.font_sizes.empty()
+            ? 16.0f : storage.font_sizes[0];
+        layout_node(root, viewport.width, viewport, storage, root_fs, metrics);
     }
 
 private:
@@ -62,7 +85,6 @@ private:
         const StyleStorageSoA& storage,
         const std::unordered_map<const DOMNode*, uint32_t>& dom_to_soa)
     {
-        // Шаг 1: display:none — пропускаем узел и всех потомков
         if (storage.displays[soa_idx] == Display::None) return nullptr;
 
         const DOMNode* dom = storage.dom_nodes[soa_idx];
@@ -72,9 +94,6 @@ private:
         node->style_soa_idx = soa_idx;
         node->type = classify_box(storage.displays[soa_idx]);
 
-        // Шаг 3: рекурсивно обходим DOM-детей, чтобы сохранить порядок
-        // текстовых и элементных узлов (нужен для корректной обёртки
-        // inline-ранов в анонимные блоки).
         for (const DOMNode* child_dom : dom->children) {
             if (!child_dom) continue;
 
@@ -86,7 +105,7 @@ private:
 
                 auto text = std::make_unique<LayoutNode>();
                 text->type = BoxType::Text;
-                text->style_soa_idx = UINT32_MAX;   // стили унаследуются
+                text->style_soa_idx = UINT32_MAX;
                 text->text_content = child_dom->text_content;
                 node->add_child(std::move(text));
             }
@@ -106,16 +125,12 @@ private:
         return false;
     }
 
-    // Элементы, которые не создают layout-узлов и не рендерятся.
-// Их содержимое либо служебное (title, meta), либо предназначено
-// для других подсистем (style → CSS, script → JS).
     static bool isNonRendered(const std::string& tag) {
         return tag == "head" || tag == "style" || tag == "script" ||
             tag == "title" || tag == "meta" || tag == "link" ||
             tag == "base" || tag == "noscript" || tag == "template";
     }
 
-    // Шаг 2: display -> BoxType
     static BoxType classify_box(Display d) {
         switch (d) {
         case Display::Block:
@@ -134,20 +149,14 @@ private:
             return BoxType::Inline;
 
         case Display::None:
-            break; // недостижимо — отфильтровано в build_node
+            break;
         }
         return BoxType::Block;
     }
 
-    // -----------------------------------------------------------------
-    //  Шаг 3 (по ТЗ): анонимные блоки
-    //  Если у Block есть одновременно inline/text и block дети —
-    //  подряд идущие inline/text оборачиваются в AnonymousBlock.
-    // -----------------------------------------------------------------
     static void wrap_anonymous_blocks(LayoutNode* node) {
         if (!node) return;
 
-        // Сначала — рекурсивно вглубь
         for (auto& c : node->children) wrap_anonymous_blocks(c.get());
 
         if (node->type != BoxType::Block) return;
@@ -157,7 +166,7 @@ private:
             if (c->is_inline_level()) has_inline = true;
             else if (c->is_block_level()) has_block = true;
         }
-        if (!has_inline || !has_block) return;  // смешивания нет — не трогаем
+        if (!has_inline || !has_block) return;
 
         std::vector<std::unique_ptr<LayoutNode>> out;
         out.reserve(node->children.size());
@@ -175,10 +184,7 @@ private:
                 run->children.push_back(std::move(c));
             }
             else {
-                if (run) { 
-                    out.push_back(std::move(run)); 
-                    run.reset(); 
-                }
+                if (run) { out.push_back(std::move(run)); run.reset(); }
                 out.push_back(std::move(c));
             }
         }
@@ -190,8 +196,6 @@ private:
     //  Phase 2: BFC layout
     // -----------------------------------------------------------------
 
-    // Возвращает реальный style-index, поднимаясь по предкам от
-    // AnonymousBlock/Text к ближайшему Block/Inline.
     static uint32_t effective_style_idx(const LayoutNode* node) {
         for (const LayoutNode* n = node; n; n = n->parent) {
             if (n->style_soa_idx != UINT32_MAX) return n->style_soa_idx;
@@ -200,31 +204,32 @@ private:
     }
 
     static void layout_node(LayoutNode* node, float parent_width,
-        const Viewport& vp, 
-        const StyleStorageSoA& storage, float root_fs)
+        const Viewport& vp,
+        const StyleStorageSoA& storage,
+        float root_fs,
+        const TextMetrics& tm)
     {
         switch (node->type) {
         case BoxType::Block:
         case BoxType::AnonymousBlock:
-            layout_block_container(node, parent_width, vp, storage, root_fs);
+            layout_block_container(node, parent_width, vp, storage, root_fs, tm);
             break;
         case BoxType::Inline:
-            layout_inline(node, parent_width,vp,  storage, root_fs);
+            layout_inline(node, parent_width, vp, storage, root_fs, tm);
             break;
         case BoxType::Text:
-            layout_text(node, parent_width, vp, storage, root_fs);
+            layout_text(node, parent_width, vp, storage, root_fs, tm);
             break;
         }
     }
 
-    // --- Length -> px ---
     static float resolve_px(const style::Length& l, float font_size,
         float root_fs, const Viewport& vp, float percentage_base)
     {
         switch (l.unit) {
         case Unit::Px:      return l.value;
         case Unit::Em:      return l.value * font_size;
-        case Unit::Rem:     return l.value * /* root_fs */ 16.0f;
+        case Unit::Rem:     return l.value * root_fs;
         case Unit::Percent: return l.value * 0.01f * percentage_base;
         case Unit::Vw:      return l.value * 0.01f * vp.width;
         case Unit::Vh:      return l.value * 0.01f * vp.height;
@@ -249,14 +254,14 @@ private:
         const float fs = storage.font_sizes[si];
         auto& g = node->geometry;
 
-        g.margin_top = resolve_px(storage.margin_top[si], fs, root_fs,vp, parent_width);
+        g.margin_top = resolve_px(storage.margin_top[si], fs, root_fs, vp, parent_width);
         g.margin_right = resolve_px(storage.margin_right[si], fs, root_fs, vp, parent_width);
         g.margin_bottom = resolve_px(storage.margin_bottom[si], fs, root_fs, vp, parent_width);
         g.margin_left = resolve_px(storage.margin_left[si], fs, root_fs, vp, parent_width);
 
         g.padding_top = resolve_px(storage.padding_top[si], fs, root_fs, vp, parent_width);
         g.padding_right = resolve_px(storage.padding_right[si], fs, root_fs, vp, parent_width);
-        g.padding_bottom = resolve_px(storage.padding_bottom[si], fs, root_fs,vp, parent_width);
+        g.padding_bottom = resolve_px(storage.padding_bottom[si], fs, root_fs, vp, parent_width);
         g.padding_left = resolve_px(storage.padding_left[si], fs, root_fs, vp, parent_width);
 
         g.border_top = resolve_px(storage.border_top_width[si], fs, root_fs, vp, parent_width);
@@ -265,81 +270,64 @@ private:
         g.border_left = resolve_px(storage.border_left_width[si], fs, root_fs, vp, parent_width);
     }
 
-    // --- Block container: вертикальный стек детей ---
     static void layout_block_container(LayoutNode* node, float parent_width,
         const Viewport& vp,
-        const StyleStorageSoA& storage, float root_fs)
+        const StyleStorageSoA& storage,
+        float root_fs,
+        const TextMetrics& tm)
     {
         auto& g = node->geometry;
         const bool is_real = (node->type == BoxType::Block);
 
         if (is_real) resolve_box_model(node, storage, vp, parent_width, root_fs);
-        // У AnonymousBlock margin/padding/border остаются 0.
 
         const float h_extra = g.margin_left + g.margin_right
             + g.padding_left + g.padding_right
             + g.border_left + g.border_right;
 
-        // content_width
+        // -------- content_width --------
         float content_width = std::max(0.0f, parent_width - h_extra);
+
         if (is_real) {
             const uint32_t si = node->style_soa_idx;
             const float fs = storage.font_sizes[si];
+            const bool border_box = (storage.box_sizings[si] == BoxSizing::BorderBox);
+            const float pb_h = g.padding_left + g.padding_right
+                + g.border_left + g.border_right;
+
             const style::Length& w = storage.widths[si];
             if (!w.is_auto() && !w.is_none()) {
                 float spec = resolve_px(w, fs, root_fs, vp, parent_width);
-                if (storage.box_sizings[si] == BoxSizing::BorderBox) {
-                    spec -= (g.padding_left + g.padding_right
-                        + g.border_left + g.border_right);
-                }
+                if (border_box) spec -= pb_h;
                 content_width = std::max(0.0f, spec);
             }
-        }
 
-        // Layout детей (block flow — друг под другом)
-        const float inner_x = g.border_left + g.padding_left;
-        const float inner_y = g.border_top + g.padding_top;
+            const style::Length& maxw = storage.max_widths[si];
+            if (!maxw.is_none()) {
+                float mw = resolve_px(maxw, fs, root_fs, vp, parent_width);
+                if (border_box) mw -= pb_h;
+                if (mw > 0.0f) content_width = std::min(content_width, mw);
+            }
 
-        float y_cursor = 0.0f;
-        for (auto& child : node->children) {
-            layout_node(child.get(), content_width, vp, storage, root_fs);
-
-            const float cmt = child->geometry.margin_top;
-            const float cmb = child->geometry.margin_bottom;
-            const float cml = child->geometry.margin_left;
-            const float ch = child->geometry.height;
-
-            child->geometry.x = inner_x + cml;
-            child->geometry.y = inner_y + y_cursor + cmt;
-
-            y_cursor += cmt + ch + cmb;
-        }
-
-        // content_height
- // content_height
-        float content_height = y_cursor;
-        if (is_real) {
-            const uint32_t si = node->style_soa_idx;
-            const float fs = storage.font_sizes[si];
-            const style::Length& h = storage.heights[si];
-            if (!h.is_auto() && !h.is_none()) {
-                float spec = resolve_px(h, fs, root_fs, vp, parent_width);   // ← +vp
-                if (storage.box_sizings[si] == BoxSizing::BorderBox) {
-                    spec -= (g.padding_top + g.padding_bottom
-                        + g.border_top + g.border_bottom);
-                }
-                content_height = std::max(0.0f, spec);
+            const style::Length& minw = storage.min_widths[si];
+            if (!minw.is_none()) {
+                float mw = resolve_px(minw, fs, root_fs, vp, parent_width);
+                if (border_box) mw -= pb_h;
+                if (mw > 0.0f) content_width = std::max(content_width, mw);
             }
         }
 
-        // Теперь auto-margin:
+        // -------- auto-margin (горизонтальный) --------
         if (is_real) {
             const uint32_t si = node->style_soa_idx;
             const bool ml_auto = storage.margin_left[si].is_auto();
             const bool mr_auto = storage.margin_right[si].is_auto();
+
             if (ml_auto || mr_auto) {
                 const float used = content_width
-                    + g.border_left + g.padding_left + g.padding_right + g.border_right;
+                    + g.border_left + g.padding_left
+                    + g.padding_right + g.border_right;
+
                 float free_space = std::max(0.0f, parent_width - used);
                 if (!ml_auto) free_space -= g.margin_left;
                 if (!mr_auto) free_space -= g.margin_right;
@@ -353,18 +341,70 @@ private:
             }
         }
 
+        // -------- дети --------
+        const float inner_x = g.border_left + g.padding_left;
+        const float inner_y = g.border_top + g.padding_top;
+
+        float y_cursor = 0.0f;
+        for (auto& child : node->children) {
+            layout_node(child.get(), content_width, vp, storage, root_fs, tm);
+
+            const float cmt = child->geometry.margin_top;
+            const float cmb = child->geometry.margin_bottom;
+            const float cml = child->geometry.margin_left;
+            const float ch = child->geometry.height;
+
+            child->geometry.x = inner_x + cml;
+            child->geometry.y = inner_y + y_cursor + cmt;
+
+            y_cursor += cmt + ch + cmb;
+        }
+
+        // -------- content_height --------
+        float content_height = y_cursor;
+
+        if (is_real) {
+            const uint32_t si = node->style_soa_idx;
+            const float fs = storage.font_sizes[si];
+            const bool border_box = (storage.box_sizings[si] == BoxSizing::BorderBox);
+            const float pb_v = g.padding_top + g.padding_bottom
+                + g.border_top + g.border_bottom;
+
+            const style::Length& h = storage.heights[si];
+            if (!h.is_auto() && !h.is_none()) {
+                float spec = resolve_px(h, fs, root_fs, vp, parent_width);
+                if (border_box) spec -= pb_v;
+                content_height = std::max(0.0f, spec);
+            }
+
+            const style::Length& maxh = storage.max_heights[si];
+            if (!maxh.is_none()) {
+                float mh = resolve_px(maxh, fs, root_fs, vp, parent_width);
+                if (border_box) mh -= pb_v;
+                if (mh > 0.0f) content_height = std::min(content_height, mh);
+            }
+
+            const style::Length& minh = storage.min_heights[si];
+            if (!minh.is_none()) {
+                float mh = resolve_px(minh, fs, root_fs, vp, parent_width);
+                if (border_box) mh -= pb_v;
+                if (mh > 0.0f) content_height = std::max(content_height, mh);
+            }
+        }
+
         g.width = g.border_left + g.padding_left + content_width
             + g.padding_right + g.border_right;
         g.height = g.border_top + g.padding_top + content_height
             + g.padding_bottom + g.border_bottom;
     }
 
-    // --- Inline: упрощённо — shrink-to-fit, дети в строку ---
     static void layout_inline(LayoutNode* node, float parent_width,
         const Viewport& vp,
-        const StyleStorageSoA& storage, float root_fs)
+        const StyleStorageSoA& storage,
+        float root_fs,
+        const TextMetrics& tm)
     {
-        resolve_box_model(node, storage,vp,  parent_width, root_fs);
+        resolve_box_model(node, storage, vp, parent_width, root_fs);
         auto& g = node->geometry;
 
         const uint32_t si = node->style_soa_idx;
@@ -378,11 +418,10 @@ private:
         const float inner_x = g.border_left + g.padding_left;
         const float inner_y = g.border_top + g.padding_top;
 
-        // Сначала разложить детей, чтобы узнать их ширины
         float cursor_x = 0.0f;
         float max_h = 0.0f;
         for (auto& child : node->children) {
-            layout_node(child.get(), avail, vp, storage, root_fs);
+            layout_node(child.get(), avail, vp, storage, root_fs, tm);
 
             child->geometry.x = inner_x + cursor_x + child->geometry.margin_left;
             child->geometry.y = inner_y + child->geometry.margin_top;
@@ -394,7 +433,6 @@ private:
                 + child->geometry.margin_bottom);
         }
 
-        // content_width: явная или shrink-to-fit
         float content_width;
         const style::Length& w = storage.widths[si];
         if (!w.is_auto() && !w.is_none()) {
@@ -409,36 +447,121 @@ private:
             content_width = cursor_x;
         }
 
+        const style::Length& maxw = storage.max_widths[si];
+        if (!maxw.is_none()) {
+            float mw = resolve_px(maxw, fs, root_fs, vp, parent_width);
+            if (mw > 0.0f) content_width = std::min(content_width, mw);
+        }
+        const style::Length& minw = storage.min_widths[si];
+        if (!minw.is_none()) {
+            float mw = resolve_px(minw, fs, root_fs, vp, parent_width);
+            if (mw > 0.0f) content_width = std::max(content_width, mw);
+        }
+
         g.width = g.border_left + g.padding_left + content_width
             + g.padding_right + g.border_right;
         g.height = g.border_top + g.padding_top + max_h
             + g.padding_bottom + g.border_bottom;
     }
 
-    // --- Text: однострочный расчёт + грубая оценка переносов ---
+    // -----------------------------------------------------------------
+    //  Line-breaking: жадный по словам.
+    //  Возвращает: суммарную ширину (max по строкам), число строк.
+    //  Если metrics нет — использует эвристику 0.55 * fs на символ.
+    // -----------------------------------------------------------------
+    static void measure_text_block(const std::string& text,
+        float max_width,
+        float fs,
+        bool bold,
+        const TextMetrics& tm,
+        float& out_width,
+        int& out_lines)
+    {
+        out_width = 0.0f;
+        out_lines = 1;
+        if (text.empty()) return;
+
+        // Быстрый путь: одна строка
+        if (tm.hasWidth()) {
+            const float one_line = tm.measure_width(text, fs, bold);
+            if (one_line <= max_width || max_width <= 0.0f) {
+                out_width = one_line;
+                out_lines = 1;
+                return;
+            }
+
+            // Разбиваем по словам
+            float line_w = 0.0f;
+            float max_line_w = 0.0f;
+            const float space_w = tm.measure_width(" ", fs, bold);
+
+            size_t i = 0, n = text.size();
+            while (i < n) {
+                while (i < n && std::isspace((unsigned char)text[i])) ++i;
+                if (i >= n) break;
+
+                size_t ws = i;
+                while (i < n && !std::isspace((unsigned char)text[i])) ++i;
+                const std::string word = text.substr(ws, i - ws);
+
+                const float ww = tm.measure_width(word, fs, bold);
+                const float gap = (line_w > 0.0f) ? space_w : 0.0f;
+
+                if (line_w + gap + ww > max_width && line_w > 0.0f) {
+                    max_line_w = std::max(max_line_w, line_w);
+                    ++out_lines;
+                    line_w = ww;
+                }
+                else {
+                    line_w += gap + ww;
+                }
+            }
+            max_line_w = std::max(max_line_w, line_w);
+
+            out_width = std::min(max_line_w, max_width);
+            return;
+        }
+
+        // Эвристика (fallback)
+        const float char_w = std::max(1.0f, fs * 0.55f);
+        const float one_line = text.size() * char_w;
+        if (one_line <= max_width || max_width <= 0.0f) {
+            out_width = one_line;
+            out_lines = 1;
+            return;
+        }
+        const float cpl = std::max(1.0f, std::floor(max_width / char_w));
+        out_lines = (int)std::ceil(text.size() / cpl);
+        out_width = max_width;
+    }
+
     static void layout_text(LayoutNode* node, float parent_width,
         const Viewport& vp,
         const StyleStorageSoA& storage,
-        float root_fs)
+        float root_fs,
+        const TextMetrics& tm)
     {
         const uint32_t si = effective_style_idx(node);
         const float fs = storage.font_sizes[si];
-        const float lh = style::resolve_line_height(storage, si);
+        const bool bold = storage.font_weights[si] >= 700;
 
-        // Заглушка для метрик шрифта — 0.5 * font-size на символ.
-        const float char_w = std::max(1.0f, fs * 0.5f);
-        const float one_line_w = node->text_content.size() * char_w;
-
-        if (parent_width > 0.0f && one_line_w > parent_width) {
-            const float chars_per_line = std::max(1.0f, std::floor(parent_width / char_w));
-            const float lines = std::ceil(node->text_content.size() / chars_per_line);
-            node->geometry.width = parent_width;
-            node->geometry.height = lines * lh;
+        // line-height
+        float lh;
+        const float raw_lh = storage.line_heights[si];
+        if (raw_lh == 0.0f && tm.hasHeight()) {
+            // normal — реальная высота строки из шрифта
+            lh = tm.line_spacing(fs, bold);
         }
         else {
-            node->geometry.width = one_line_w;
-            node->geometry.height = lh;
+            lh = style::resolve_line_height(storage, si);
         }
-        // margin/padding/border остаются 0 (initial значения).
+
+        float text_w = 0.0f;
+        int   lines = 1;
+        measure_text_block(node->text_content, parent_width, fs, bold, tm,
+            text_w, lines);
+
+        node->geometry.width = text_w;
+        node->geometry.height = lines * lh;
     }
 };

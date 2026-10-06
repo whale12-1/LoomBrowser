@@ -64,7 +64,12 @@ private:
         return (pos_ + off < input_.size()) ? input_[pos_ + off] : '\0';
     }
     char advance() { return (pos_ < input_.size()) ? input_[pos_++] : '\0'; }
-    bool match(char c) { if (!eof() && input_[pos_] == c) { ++pos_; return true; } return false; }
+    bool match(char c) { 
+        if (!eof() && input_[pos_] == c) { 
+            ++pos_; return true; 
+        } 
+        return false; 
+    }
 
     static bool is_ws(char c) {
         return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f';
@@ -252,8 +257,22 @@ private:
                 continue;
             }
 
-            if (c == '(') { ++paren_depth; out += c; ++pos_; continue; }
-            if (c == ')') { if (paren_depth > 0) --paren_depth; out += c; ++pos_; continue; }
+            if (c == '(') 
+            { 
+                ++paren_depth; out += c;
+                ++pos_; 
+                continue; 
+            }
+            if (c == ')') 
+            {
+                if (paren_depth > 0) 
+                {
+                    --paren_depth; 
+                    out += c; 
+                    ++pos_; 
+                    continue; 
+                }
+            }
 
             if ((c == '{' || c == '}') && paren_depth == 0) break;
 

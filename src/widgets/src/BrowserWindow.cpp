@@ -8,11 +8,36 @@
 #include "../parsers/selector_matcher/user_agent_stylesheet.h"   // в начале файла
 #include "../parsers/selector_matcher/style_origin.h"
 #include "../layout/headers/layout_tree_builder.h"
+#include <functional>
 #include <QVBoxLayout>
 #include <QStatusBar>
 #include <QLabel>
 #include <QDebug>
 namespace {
+
+    LayoutTreeBuilder::TextMetrics makeQtTextMetrics(const QWidget* widget) {
+        LayoutTreeBuilder::TextMetrics m;
+        const QFont base = widget->font();
+
+        m.measure_width = [base](const std::string& text,
+            float fs, bool bold) -> float {
+                QFont f = base;
+                f.setPixelSize(std::max(1, int(fs)));              // без dpr
+                f.setBold(bold);
+                QFontMetricsF fm(f);
+                return float(fm.horizontalAdvance(QString::fromStdString(text)));
+            };
+
+        m.line_spacing = [base](float fs, bool bold) -> float {
+            QFont f = base;
+            f.setPixelSize(std::max(1, int(fs)));              // без dpr
+            f.setBold(bold);
+            QFontMetricsF fm(f);
+            return float(fm.lineSpacing());
+            };
+
+        return m;
+    }
 
     // Первый Element в поддереве (пропускаем Document/Text/Comment)
     DOMNode* firstElement(DOMNode* n) {
@@ -37,10 +62,11 @@ namespace {
     // Полный пайплайн: HTML (+ встроенный CSS из <style>) → DisplayList.
     // Арена живёт внутри функции; DisplayList не держит ссылок на неё
     // (только heap-скопированные строки), поэтому безопасно возвращать
-
     DisplayList renderHtml(const std::string& html,
         float viewport_width,
-        float viewport_height){
+        float viewport_height,
+        const LayoutTreeBuilder::TextMetrics& tm)
+    {
         ArenaAllocator arena;
         HTMLParser hp(arena);
         DOMNode* doc = hp.parse(html);
@@ -50,19 +76,14 @@ namespace {
         std::string author_css;
         collectStyleText(doc, author_css);
 
-        // ─── ДИАГНОСТИКА ───
-        qDebug() << "[render] html bytes:" << html.size();
-        qDebug() << "[render] author css bytes:" << author_css.size();
-        if (!author_css.empty())
-            qDebug() << "[render] css preview:"
-            << QString::fromStdString(author_css.substr(0, 200));
+#ifdef _DEBUG
+        qDebug() << "[render] html:" << html.size()
+            << "css:" << author_css.size();
+#endif
 
         CSSParser cp(arena);
         StyleSheet* ua_sheet = cp.parse(ua_css::kSource);
         StyleSheet* author_sheet = cp.parse(author_css);
-
-        qDebug() << "[render] ua rules:" << ua_sheet->rules.size();
-        qDebug() << "[render] author rules:" << author_sheet->rules.size();
 
         std::vector<StyleRuleIndex::SheetRef> sources = {
             { ua_sheet,     Origin::UserAgent },
@@ -70,22 +91,25 @@ namespace {
         };
         StyleStorageSoA storage = StyleTreeBuilder::build(root, sources);
 
-        // ─── Ещё диагностика: что попало в SoA ───
         for (uint32_t i = 0; i < storage.size(); ++i) {
-            const std::string& tag = storage.dom_nodes[i]->tag_name;
-            if (tag == "div" || tag == "body") {
-                qDebug() << "[style]" << QString::fromStdString(tag)
-                    << "width:" << storage.widths[i].value
-                    << "unit:" << int(storage.widths[i].unit)
-                    << "bg:" << QString::number(storage.background_colors[i], 16);
+            const auto* dom = storage.dom_nodes[i];
+            if (!dom) continue;
+            if (dom->tag_name == "h1" || dom->tag_name == "p" || dom->tag_name == "button") {
+                qDebug() << "[style]" << QString::fromStdString(dom->tag_name)
+                    << "font-size:" << storage.font_sizes[i]
+                    << "font-weight:" << storage.font_weights[i];
             }
         }
 
         auto layout = LayoutTreeBuilder::build(storage);
-        // ...
         if (!layout) return {};
 
-        LayoutTreeBuilder::compute_layout(layout.get(), {viewport_width, viewport_height}, storage);
+        LayoutTreeBuilder::Viewport vp{ viewport_width, viewport_height };
+        LayoutTreeBuilder::compute_layout(layout.get(), vp, storage, tm);   // ← один вызов
+
+#ifdef _DEBUG
+        // ... dump (опционально)
+#endif
 
         return DisplayListBuilder::build(layout.get(), storage);
     }
@@ -188,7 +212,10 @@ void BrowserWindow::onHttpResponse(const net::HttpResponse& resp) {
     const int vw = view_->viewport()->width();
     const int vh = view_->viewport()->height();
 
-    DisplayList list = renderHtml(html, float(vw), float(vh));
+    // Метрики берём от того же шрифта, что и canvas рисует.
+    const auto tm = makeQtTextMetrics(view_->canvas());
+
+    DisplayList list = renderHtml(html, float(vw), float(vh), tm);
 
     view_->setDisplayList(list);
     status_label_->setText(
@@ -196,6 +223,7 @@ void BrowserWindow::onHttpResponse(const net::HttpResponse& resp) {
         .arg(resp.body.size() / 1024)
         .arg(resp.status_code));
 }
+
 
 void BrowserWindow::onHttpFailure(const net::Url& url, int status,
     const std::string& error)
@@ -224,7 +252,9 @@ void BrowserWindow::showErrorPage(const QString& title, const QString& details) 
     const int vw = view_->viewport()->width();
     const int vh = view_->viewport()->height();
 
-    DisplayList list = renderHtml(html, float(vw), float(vh));
+    const auto tm = makeQtTextMetrics(view_->canvas());
+
+    DisplayList list = renderHtml(html, float(vw), float(vh), tm);
     view_->setDisplayList(list);
     status_label_->setText(title);
 }
