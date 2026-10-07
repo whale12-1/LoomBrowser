@@ -2,7 +2,8 @@
 
 #include <QDebug>
 #include <QString>
-
+#include "bindings/DocumentBindings.h"
+#include "bindings/ElementBindings.h"
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
@@ -120,27 +121,19 @@ void JsEngine::registerConsole() {
 // ============================================================
 
 void JsEngine::registerElementClass() {
-    // В QuickJS-ng: JS_NewClassID(JSRuntime*, JSClassID*).
-    // В старом QuickJS: JS_NewClassID(JSClassID*).
-    // Мы вызываем тот вариант, который есть в вашей версии:
-#if defined(JS_NewClassID)
-    // Оба варианта компилируются — препроцессор не различает.
-    // Если сборка падает на этой строке — используйте вариант ниже.
-#endif
-
-    // Вариант для QuickJS-ng (актуальный):
-    element_class_id_ = JS_NewClassID(rt_, &element_class_id_);
-
-    // Вариант для классического QuickJS (закомментируйте предыдущий
-    // и раскомментируйте этот, если у вас старый движок):
-    // element_class_id_ = JS_NewClassID(&element_class_id_);
+    JS_NewClassID(rt_, &element_class_id_);
 
     JSClassDef def{};
     def.class_name = "Element";
-    def.finalizer = nullptr;   // DOMNode владеет arena, не JS
-    // gc_mark не нужен — DOMNode* не является JS-значением.
+    def.finalizer = [](JSRuntime*, JSValue) {
+        // no-op. DOMNode владеет арена страницы, а не QuickJS.
+        // Нужен только чтобы quickjs-ng создал opaque_class —
+        // без него JS_SetClassProto не работает.
+        };
 
-    JS_NewClass(rt_, element_class_id_, &def);
+    int rc = JS_NewClass(rt_, element_class_id_, &def);
+    qDebug() << "[JsEngine] JS_NewClass rc =" << rc
+        << "element_class_id_ =" << element_class_id_;
 }
 
 // ============================================================
@@ -152,19 +145,29 @@ void JsEngine::registerElementClass() {
 void JsEngine::installGlobals(Page* page, DOMNode* document_root) {
     page_ = page;
 
-    // TODO: когда появятся DocumentBindings/ElementBindings:
-    //   bindings::installDocument(ctx_, element_class_id_, page, document_root);
-    //   bindings::installElement(ctx_, element_class_id_);
-    // Пока — только console, уже установлен в конструкторе.
+    // ВАЖНО: JS_NewClassID читает исходное значение *pclass_id,
+    // чтобы продолжить нумерацию. Передавать неинициализированную
+    // переменную = UB (получите мусорный ID и краш при JS_NewObjectClass).
+    // page_class_id_ инициализирован 0 в заголовке — этого достаточно.
+    JS_NewClassID(rt_, &page_class_id_);
+
+    JSClassDef page_def{};
+    page_def.class_name = "Page";
+    JS_NewClass(rt_, page_class_id_, &page_def);
+
+    JSValue p = JS_NewObjectClass(ctx_, page_class_id_);
+    JS_SetOpaque(p, page);
+
+    JSValue global = JS_GetGlobalObject(ctx_);
+    JS_SetPropertyStr(ctx_, global, "__page", p);
+    JS_FreeValue(ctx_, global);
+
+    // Регистрируем Element прототип и Document.
+    bindings::installElement(ctx_, element_class_id_, page);
+    bindings::installDocument(ctx_, element_class_id_, page);
 
     (void)document_root;
-
-    // Простой smoke-test — если что-то пойдёт не так, увидим в консоли.
-    JSValue global = JS_GetGlobalObject(ctx_);
-    JS_SetPropertyStr(ctx_, global, "window", JS_DupValue(ctx_, global));
-    JS_FreeValue(ctx_, global);
 }
-
 // ============================================================
 //  run
 // ============================================================

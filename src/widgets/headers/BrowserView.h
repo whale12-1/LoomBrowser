@@ -7,6 +7,7 @@
 #include "../parsers/selector_matcher/display_list.h"
 
 class BrowserCanvas : public QWidget {
+    Q_OBJECT
 public:
     explicit BrowserCanvas(QWidget* parent = nullptr);
 
@@ -16,8 +17,11 @@ public:
 
     // Нужен для makeQtTextMetrics(view_->canvas()->font()).
     const DisplayList& displayList() const { return list_; }
+signals:
+    void clicked(float x, float y);
 
 protected:
+    void mousePressEvent(QMouseEvent* ev) override;
     void paintEvent(QPaintEvent* ev) override;
 
 private:

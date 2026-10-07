@@ -172,6 +172,13 @@ void BrowserCanvas::paintEvent(QPaintEvent* ev) {
         }
     }
 }
+void BrowserCanvas::mousePressEvent(QMouseEvent* ev) {
+    if (ev->button() == Qt::LeftButton) {
+        emit clicked(float(ev->position().x()),
+            float(ev->position().y()));
+    }
+    QWidget::mousePressEvent(ev);
+}
 
 // ============================================================
 //  BrowserView
@@ -188,3 +195,4 @@ BrowserView::BrowserView(QWidget* parent) : QScrollArea(parent) {
 void BrowserView::setDisplayList(const DisplayList& list) {
     canvas_->setDisplayList(list);
 }
+

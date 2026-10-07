@@ -13,16 +13,21 @@
 #include <QStatusBar>
 #include <QLabel>
 #include <QDebug>
+
 namespace {
 
+    // Текстовые метрики на основе Qt. Используют тот же шрифт,
+    // что и BrowserCanvas для растеризации — layout и painter
+    // совпадают по метрикам глифов.
     LayoutTreeBuilder::TextMetrics makeQtTextMetrics(const QWidget* widget) {
         LayoutTreeBuilder::TextMetrics m;
         const QFont base = widget->font();
 
         m.measure_width = [base](const std::string& text,
-            float fs, bool bold) -> float {
+            float fs, bool bold) -> float
+            {
                 QFont f = base;
-                f.setPixelSize(std::max(1, int(fs)));              // без dpr
+                f.setPixelSize(std::max(1, int(fs)));
                 f.setBold(bold);
                 QFontMetricsF fm(f);
                 return float(fm.horizontalAdvance(QString::fromStdString(text)));
@@ -30,88 +35,13 @@ namespace {
 
         m.line_spacing = [base](float fs, bool bold) -> float {
             QFont f = base;
-            f.setPixelSize(std::max(1, int(fs)));              // без dpr
+            f.setPixelSize(std::max(1, int(fs)));
             f.setBold(bold);
             QFontMetricsF fm(f);
             return float(fm.lineSpacing());
             };
 
         return m;
-    }
-
-    // Первый Element в поддереве (пропускаем Document/Text/Comment)
-    DOMNode* firstElement(DOMNode* n) {
-        if (!n) return nullptr;
-        if (n->type == NodeType::Element) return n;
-        for (DOMNode* c : n->children)
-            if (auto* e = firstElement(c)) return e;
-        return nullptr;
-    }
-
-    // Собрать текст всех <style>…</style>
-    void collectStyleText(DOMNode* n, std::string& out) {
-        if (!n) return;
-        if (n->type == NodeType::Element && n->tag_name == "style") {
-            for (DOMNode* c : n->children)
-                if (c->type == NodeType::Text) out += c->text_content;
-            return;
-        }
-        for (DOMNode* c : n->children) collectStyleText(c, out);
-    }
-
-    // Полный пайплайн: HTML (+ встроенный CSS из <style>) → DisplayList.
-    // Арена живёт внутри функции; DisplayList не держит ссылок на неё
-    // (только heap-скопированные строки), поэтому безопасно возвращать
-    DisplayList renderHtml(const std::string& html,
-        float viewport_width,
-        float viewport_height,
-        const LayoutTreeBuilder::TextMetrics& tm)
-    {
-        ArenaAllocator arena;
-        HTMLParser hp(arena);
-        DOMNode* doc = hp.parse(html);
-        DOMNode* root = firstElement(doc);
-        if (!root) return {};
-
-        std::string author_css;
-        collectStyleText(doc, author_css);
-
-#ifdef _DEBUG
-        qDebug() << "[render] html:" << html.size()
-            << "css:" << author_css.size();
-#endif
-
-        CSSParser cp(arena);
-        StyleSheet* ua_sheet = cp.parse(ua_css::kSource);
-        StyleSheet* author_sheet = cp.parse(author_css);
-
-        std::vector<StyleRuleIndex::SheetRef> sources = {
-            { ua_sheet,     Origin::UserAgent },
-            { author_sheet, Origin::Author    },
-        };
-        StyleStorageSoA storage = StyleTreeBuilder::build(root, sources);
-
-        for (uint32_t i = 0; i < storage.size(); ++i) {
-            const auto* dom = storage.dom_nodes[i];
-            if (!dom) continue;
-            if (dom->tag_name == "h1" || dom->tag_name == "p" || dom->tag_name == "button") {
-                qDebug() << "[style]" << QString::fromStdString(dom->tag_name)
-                    << "font-size:" << storage.font_sizes[i]
-                    << "font-weight:" << storage.font_weights[i];
-            }
-        }
-
-        auto layout = LayoutTreeBuilder::build(storage);
-        if (!layout) return {};
-
-        LayoutTreeBuilder::Viewport vp{ viewport_width, viewport_height };
-        LayoutTreeBuilder::compute_layout(layout.get(), vp, storage, tm);   // ← один вызов
-
-#ifdef _DEBUG
-        // ... dump (опционально)
-#endif
-
-        return DisplayListBuilder::build(layout.get(), storage);
     }
 
 } // namespace
@@ -144,6 +74,8 @@ BrowserWindow::BrowserWindow(std::unique_ptr<net::NetworkBackend> backend,
     connect(toolbar_, &BrowserToolbar::reloadRequested, this, &BrowserWindow::onReload);
     connect(toolbar_, &BrowserToolbar::homeRequested, this, &BrowserWindow::onHome);
     connect(toolbar_, &BrowserToolbar::urlEntered, this, &BrowserWindow::onUrlEntered);
+    connect(view_->canvas(), &BrowserCanvas::clicked,
+        this, &BrowserWindow::onCanvasClicked);
 
     installBackendCallbacks();
     resize(1200, 800);
@@ -212,18 +144,19 @@ void BrowserWindow::onHttpResponse(const net::HttpResponse& resp) {
     const int vw = view_->viewport()->width();
     const int vh = view_->viewport()->height();
 
-    // Метрики берём от того же шрифта, что и canvas рисует.
+    // Метрики берём от того же шрифта, что и canvas рисует —
+    // тогда layout и painter не разойдутся по метрикам глифов.
     const auto tm = makeQtTextMetrics(view_->canvas());
 
-    DisplayList list = renderHtml(html, float(vw), float(vh), tm);
+    page_ = std::make_unique<Page>();
+    page_->loadHtml(html, float(vw), float(vh), tm);
 
-    view_->setDisplayList(list);
+    view_->setDisplayList(page_->displayList());
     status_label_->setText(
         QString("Loaded %1 KB — HTTP %2")
         .arg(resp.body.size() / 1024)
         .arg(resp.status_code));
 }
-
 
 void BrowserWindow::onHttpFailure(const net::Url& url, int status,
     const std::string& error)
@@ -254,8 +187,10 @@ void BrowserWindow::showErrorPage(const QString& title, const QString& details) 
 
     const auto tm = makeQtTextMetrics(view_->canvas());
 
-    DisplayList list = renderHtml(html, float(vw), float(vh), tm);
-    view_->setDisplayList(list);
+    page_ = std::make_unique<Page>();
+    page_->loadHtml(html, float(vw), float(vh), tm);
+
+    view_->setDisplayList(page_->displayList());
     status_label_->setText(title);
 }
 
@@ -291,6 +226,16 @@ void BrowserWindow::onForward() {
         fetchCurrent();
         updateNavigationButtons();
     }
+}
+void BrowserWindow::onCanvasClicked(float x, float y) {
+    if (!page_) return;
+
+    // dispatchClick может пометить DOM как dirty и вызвать relayout
+    page_->dispatchClick(x, y);
+
+    // Забираем актуальный кадр (даже если ничего не менялось —
+    // это дешёвая операция, DisplayList уже в Page).
+    view_->setDisplayList(page_->displayList());
 }
 
 void BrowserWindow::onReload() { fetchCurrent(); }
