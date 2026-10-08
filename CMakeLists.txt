@@ -29,64 +29,24 @@ endif()
 
 
 # ################################################################
-#  РЕЖИМ FUZZING — только парсеры, никаких внешних зависимостей.
-#  Всё, что ниже этого блока (Qt6, OpenGL, тесты, приложение),
-#  в этом режиме не выполняется благодаря return().
+#  РЕЖИМ FUZZING.
+#  Никаких Qt / OpenGL / Freetype / OpenSSL / QuickJS.
+#  Весь пайплайн описывается в fuzz/CMakeLists.txt (tb_fuzz_core).
 # ################################################################
 if(TOYBROWSER_FUZZING)
-
     if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         message(FATAL_ERROR
             "Fuzzing requires Clang. Use clang++ or clang-cl.")
     endif()
 
-    add_compile_options(-fsanitize=fuzzer-no-link,address,undefined
-                        -fno-omit-frame-pointer -g -O1)
-
-    # --- Глобим только парсеры: html_parser, css_parser, selector_matcher,
-    #     arena_memory_allocator и т.п. Никаких src/widgets, src/net,
-    #     src/render, src/js, src/layout.
-    file(GLOB_RECURSE FUZZ_CORE_SOURCES CONFIGURE_DEPENDS
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/parsers/*.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/parsers/*.h"
-    )
-    list(FILTER FUZZ_CORE_SOURCES EXCLUDE REGEX "CMakeCXXCompilerId\\.cpp$")
-
-    if(NOT FUZZ_CORE_SOURCES)
-        message(FATAL_ERROR
-            "TOYBROWSER_FUZZING=ON, but no sources found under src/parsers/. "
-            "Check that the path exists and contains the HTML/CSS parser.")
-    endif()
-
-    add_library(ToyBrowserCore STATIC ${FUZZ_CORE_SOURCES})
-
-    target_include_directories(ToyBrowserCore PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/src
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/parsers
-    )
-
-    # Дополнительные include-пути внутри парсеров — добавляем только если папка существует.
-    foreach(subdir
-            parsers/arena_memory_allocator/headers
-            parsers/html_parser/headers
-            parsers/css_parser/headers
-            parsers/selector_matcher)
-        if(IS_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/src/${subdir}")
-            target_include_directories(ToyBrowserCore PUBLIC
-                "${CMAKE_CURRENT_SOURCE_DIR}/src/${subdir}")
-        endif()
-    endforeach()
-
-    # ---- Собственно фаззер ----
+    # Не задаём глобальных -fsanitize здесь: каждый fuzz-таргет
+    # выставляет свои флаги в fuzz/CMakeLists.txt через add_fuzz_target.
     add_subdirectory(fuzz)
-
-    # Всё остальное в этом режиме не нужно — выходим из CMakeLists.
     return()
 endif()
 # ################################################################
 #  КОНЕЦ FUZZING-РЕЖИМА
 # ################################################################
-
 
 # ============================================================
 #  ОБЫЧНАЯ СБОРКА (десктопный браузер)
