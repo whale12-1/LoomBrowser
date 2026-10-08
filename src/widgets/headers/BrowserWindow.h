@@ -5,7 +5,7 @@
 #include <memory>
 #include <vector>
 
-#include "BrowserToolbar.h"
+#include "BrowserToolBar.h"
 #include "BrowserView.h"
 #include "../net/NetworkBackend.h"
 #include "../net/NetworkBackendFactory.h"
