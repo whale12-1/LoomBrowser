@@ -11,7 +11,7 @@
 #include "parsers/selector_matcher/display_list.h"
 #include "layout/headers/layout_node.h"
 #include "layout/headers/layout_tree_builder.h"   // для TextMetrics
-#include "js/JsEngine.h"
+#include "js/JSEngine.h"
 
 // Слушатель события, привязанный к DOMNode.
 struct JsListener {
