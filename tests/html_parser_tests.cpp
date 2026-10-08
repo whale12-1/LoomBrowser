@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "../parsers/html_parser/headers/html_parser.h"
@@ -8,11 +9,19 @@
 #include "../parsers/arena_memory_allocator/headers/arena.h"
 
 // ============================================================
-//  Вспомогательные функции (не аллоцируют, работают с DOM-деревом)
+//  Вспомогательные функции.
+//  ВАЖНО: DOM хранит строки как std::pmr::string, поэтому все
+//  сравнения делаем через std::string_view — без временных
+//  std::string и без обращений к attributes.at("ключ").
 // ============================================================
 namespace {
 
-    // Первый Element-ребёнок узла
+    // Универсальный взгляд на любую basic_string (std::string, pmr::string, ...).
+    template <class Traits, class Alloc>
+    inline std::string_view sv(const std::basic_string<char, Traits, Alloc>& s) {
+        return { s.data(), s.size() };
+    }
+
     DOMNode* first_element(const DOMNode* root) {
         if (!root) return nullptr;
         for (DOMNode* c : root->children)
@@ -20,32 +29,30 @@ namespace {
         return nullptr;
     }
 
-    // Первый Element-ребёнок с указанным тегом
-    DOMNode* find_tag(const DOMNode* root, const std::string& tag) {
+    DOMNode* find_tag(const DOMNode* root, std::string_view tag) {
         if (!root) return nullptr;
         for (DOMNode* c : root->children)
-            if (c->type == NodeType::Element && c->tag_name == tag) return c;
+            if (c->type == NodeType::Element && sv(c->tag_name) == tag)
+                return c;
         return nullptr;
     }
 
-    // Количество детей конкретного типа
     size_t count_type(const DOMNode* node, NodeType t) {
         size_t n = 0;
         for (const DOMNode* c : node->children) if (c->type == t) ++n;
         return n;
     }
 
-    // Собрать текст всех текстовых потомков (DFS)
     void collect_text(const DOMNode* node, std::string& out) {
         if (!node) return;
-        if (node->type == NodeType::Text) out += node->text_content;
+        if (node->type == NodeType::Text)
+            out.append(node->text_content.data(), node->text_content.size());
         for (const DOMNode* c : node->children) collect_text(c, out);
     }
     std::string all_text(const DOMNode* root) {
         std::string s; collect_text(root, s); return s;
     }
 
-    // Первый текстовый ребёнок
     DOMNode* first_text(const DOMNode* root) {
         if (!root) return nullptr;
         for (DOMNode* c : root->children)
@@ -53,10 +60,20 @@ namespace {
         return nullptr;
     }
 
-    // Обёртка: парсит html и возвращает корень #document
-    struct Parsed {
-        DOMNode* root = nullptr;
-    };
+    // --- attribute lookup без аллокаций и без .at("key") ---
+    std::string_view attr(const DOMNode* n, std::string_view name) {
+        for (const auto& kv : n->attributes)
+            if (sv(kv.first) == name) return sv(kv.second);
+        return {};
+    }
+    bool has_attr(const DOMNode* n, std::string_view name) {
+        for (const auto& kv : n->attributes)
+            if (sv(kv.first) == name) return true;
+        return false;
+    }
+
+    struct Parsed { DOMNode* root = nullptr; };
+
     inline Parsed parse(ArenaAllocator& arena, const std::string& html) {
         HTMLParser p(arena);
         return { p.parse(html) };
@@ -64,6 +81,10 @@ namespace {
 
 } // namespace
 
+
+// ============================================================
+//  Базовые
+// ============================================================
 
 TEST_CASE("HTMLParser: empty input yields empty document",
     "[html_parser][basic]") {
@@ -152,6 +173,11 @@ TEST_CASE("HTMLParser: parser is reusable across calls",
     REQUIRE(b->children[0]->tag_name == "span");
 }
 
+
+// ============================================================
+//  Теги
+// ============================================================
+
 TEST_CASE("HTMLParser: uppercase tag lowercased",
     "[html_parser][tag]") {
     ArenaAllocator arena;
@@ -186,27 +212,31 @@ TEST_CASE("HTMLParser: nested same-name tags close correctly",
 }
 
 
+// ============================================================
+//  Атрибуты
+// ============================================================
+
 TEST_CASE("HTMLParser: attribute with double quotes",
     "[html_parser][attr]") {
     ArenaAllocator arena;
     auto r = parse(arena, R"(<div class="foo"></div>)");
     DOMNode* div = first_element(r.root);
     REQUIRE(div->attributes.size() == 1);
-    REQUIRE(div->attributes.at("class") == "foo");
+    REQUIRE(attr(div, "class") == "foo");
 }
 
 TEST_CASE("HTMLParser: attribute with single quotes",
     "[html_parser][attr]") {
     ArenaAllocator arena;
     auto r = parse(arena, "<div class='foo'></div>");
-    REQUIRE(first_element(r.root)->attributes.at("class") == "foo");
+    REQUIRE(attr(first_element(r.root), "class") == "foo");
 }
 
 TEST_CASE("HTMLParser: attribute unquoted",
     "[html_parser][attr]") {
     ArenaAllocator arena;
     auto r = parse(arena, "<div id=main></div>");
-    REQUIRE(first_element(r.root)->attributes.at("id") == "main");
+    REQUIRE(attr(first_element(r.root), "id") == "main");
 }
 
 TEST_CASE("HTMLParser: multiple attributes",
@@ -215,11 +245,11 @@ TEST_CASE("HTMLParser: multiple attributes",
     auto r = parse(arena,
         R"(<input type="text" name="q" value="hello world" disabled>)");
     DOMNode* in = first_element(r.root);
-    REQUIRE(in->attributes.at("type") == "text");
-    REQUIRE(in->attributes.at("name") == "q");
-    REQUIRE(in->attributes.at("value") == "hello world");
-    REQUIRE(in->attributes.count("disabled") == 1);
-    REQUIRE(in->attributes.at("disabled").empty());
+    REQUIRE(attr(in, "type") == "text");
+    REQUIRE(attr(in, "name") == "q");
+    REQUIRE(attr(in, "value") == "hello world");
+    REQUIRE(has_attr(in, "disabled"));
+    REQUIRE(attr(in, "disabled").empty());
 }
 
 TEST_CASE("HTMLParser: boolean attribute has empty value",
@@ -227,15 +257,15 @@ TEST_CASE("HTMLParser: boolean attribute has empty value",
     ArenaAllocator arena;
     auto r = parse(arena, "<input disabled>");
     DOMNode* in = first_element(r.root);
-    REQUIRE(in->attributes.count("disabled") == 1);
-    REQUIRE(in->attributes.at("disabled") == "");
+    REQUIRE(has_attr(in, "disabled"));
+    REQUIRE(attr(in, "disabled") == "");
 }
 
 TEST_CASE("HTMLParser: empty attribute value with equals",
     "[html_parser][attr]") {
     ArenaAllocator arena;
     auto r = parse(arena, R"(<div class=""></div>)");
-    REQUIRE(first_element(r.root)->attributes.at("class").empty());
+    REQUIRE(attr(first_element(r.root), "class").empty());
 }
 
 TEST_CASE("HTMLParser: attribute name is lowercased",
@@ -243,31 +273,36 @@ TEST_CASE("HTMLParser: attribute name is lowercased",
     ArenaAllocator arena;
     auto r = parse(arena, R"(<div CLASS="Foo"></div>)");
     DOMNode* div = first_element(r.root);
-    REQUIRE(div->attributes.count("class") == 1);
+    REQUIRE(has_attr(div, "class"));
     // Значение сохраняет регистр
-    REQUIRE(div->attributes.at("class") == "Foo");
+    REQUIRE(attr(div, "class") == "Foo");
 }
 
 TEST_CASE("HTMLParser: whitespace around equals",
     "[html_parser][attr]") {
     ArenaAllocator arena;
     auto r = parse(arena, R"(<div class = "foo" ></div>)");
-    REQUIRE(first_element(r.root)->attributes.at("class") == "foo");
+    REQUIRE(attr(first_element(r.root), "class") == "foo");
 }
 
 TEST_CASE("HTMLParser: attribute value with spaces inside quotes",
     "[html_parser][attr]") {
     ArenaAllocator arena;
     auto r = parse(arena, R"(<div title="a b c"></div>)");
-    REQUIRE(first_element(r.root)->attributes.at("title") == "a b c");
+    REQUIRE(attr(first_element(r.root), "title") == "a b c");
 }
 
 TEST_CASE("HTMLParser: duplicate attribute last wins",
     "[html_parser][attr]") {
     ArenaAllocator arena;
     auto r = parse(arena, R"(<div class="a" class="b"></div>)");
-    REQUIRE(first_element(r.root)->attributes.at("class") == "b");
+    REQUIRE(attr(first_element(r.root), "class") == "b");
 }
+
+
+// ============================================================
+//  Void-элементы и self-closing
+// ============================================================
 
 TEST_CASE("HTMLParser: <br> is void",
     "[html_parser][void]") {
@@ -300,25 +335,53 @@ TEST_CASE("HTMLParser: common void elements",
     REQUIRE(r.root->children[4]->tag_name == "link");
 }
 
-TEST_CASE("HTMLParser: self-closing with slash",
+// Парсер трактует "/>" в конце тега как самозакрытие (XML-стиль),
+// даже для не-void элементов. Тест фиксирует именно это поведение.
+// Если позже парсер перейдёт на HTML5-семантику ("<div/>" == открытый <div>),
+// тест нужно будет инвертировать (см. комментарий в конце).
+TEST_CASE("HTMLParser: non-void self-closing closes the element",
     "[html_parser][void]") {
     ArenaAllocator arena;
     auto r = parse(arena, "<div/><span></span>");
+
+    // <div/> — самозакрытый, <span> — его сосед на верхнем уровне.
     REQUIRE(r.root->children.size() == 2);
     REQUIRE(r.root->children[0]->tag_name == "div");
     REQUIRE(r.root->children[0]->children.empty());
     REQUIRE(r.root->children[1]->tag_name == "span");
+    REQUIRE(r.root->children[1]->children.empty());
+
+    // HTML5-вариант (если переключите парсер):
+    //   REQUIRE(r.root->children.size() == 1);
+    //   REQUIRE(r.root->children[0]->tag_name == "div");
+    //   REQUIRE(r.root->children[0]->children.size() == 1);
+    //   REQUIRE(r.root->children[0]->children[0]->tag_name == "span");
 }
 
-TEST_CASE("HTMLParser: self-closing with space before slash",
+TEST_CASE("HTMLParser: void self-closing with slash closes",
     "[html_parser][void]") {
     ArenaAllocator arena;
-    auto r = parse(arena, "<div /><span/>");
+    auto r = parse(arena, "<br/><p></p>");
     REQUIRE(r.root->children.size() == 2);
-    REQUIRE(r.root->children[0]->tag_name == "div");
-    REQUIRE(r.root->children[1]->tag_name == "span");
+    REQUIRE(r.root->children[0]->tag_name == "br");
+    REQUIRE(r.root->children[0]->children.empty());
+    REQUIRE(r.root->children[1]->tag_name == "p");
 }
 
+TEST_CASE("HTMLParser: void with space before slash",
+    "[html_parser][void]") {
+    ArenaAllocator arena;
+    auto r = parse(arena, "<br /><img src=\"x\" /><p></p>");
+    REQUIRE(r.root->children.size() == 3);
+    REQUIRE(r.root->children[0]->tag_name == "br");
+    REQUIRE(r.root->children[1]->tag_name == "img");
+    REQUIRE(r.root->children[2]->tag_name == "p");
+}
+
+
+// ============================================================
+//  Текст
+// ============================================================
 
 TEST_CASE("HTMLParser: plain text becomes Text node",
     "[html_parser][text]") {
@@ -352,6 +415,10 @@ TEST_CASE("HTMLParser: text with inner structure",
     REQUIRE(p->children[2]->text_content == "!");
 }
 
+
+// ============================================================
+//  Комментарии
+// ============================================================
 
 TEST_CASE("HTMLParser: simple comment",
     "[html_parser][comment]") {
@@ -399,6 +466,10 @@ TEST_CASE("HTMLParser: comment with dash inside",
 }
 
 
+// ============================================================
+//  DOCTYPE
+// ============================================================
+
 TEST_CASE("HTMLParser: simple DOCTYPE",
     "[html_parser][doctype]") {
     ArenaAllocator arena;
@@ -421,10 +492,13 @@ TEST_CASE("HTMLParser: DOCTYPE with PUBLIC is skipped to bogus",
     ArenaAllocator arena;
     auto r = parse(arena,
         "<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.01//EN\" \"http://x\">");
-    // Парсер не парсит public/system, но не должен зациклиться.
     REQUIRE(r.root->children.size() >= 1);
 }
 
+
+// ============================================================
+//  Entity
+// ============================================================
 
 TEST_CASE("HTMLParser: &amp; in text",
     "[html_parser][entity]") {
@@ -458,8 +532,7 @@ TEST_CASE("HTMLParser: unknown entity left mostly intact",
     "[html_parser][entity]") {
     ArenaAllocator arena;
     auto r = parse(arena, "<p>&unknown;</p>");
-    // Не найдено — должен остаться '&' и дальше как обычный текст.
-    // Точное поведение зависит от парсера; главное — не падать и не потерять контент.
+    // Главное — не падать и не терять контент целиком.
     REQUIRE(all_text(r.root).find('&') != std::string::npos);
 }
 
@@ -467,7 +540,7 @@ TEST_CASE("HTMLParser: entity in attribute value",
     "[html_parser][entity]") {
     ArenaAllocator arena;
     auto r = parse(arena, R"(<div title="a &amp; b"></div>)");
-    REQUIRE(first_element(r.root)->attributes.at("title") == "a & b");
+    REQUIRE(attr(first_element(r.root), "title") == "a & b");
 }
 
 TEST_CASE("HTMLParser: &nbsp; produces non-breaking space codepoint",
@@ -480,6 +553,9 @@ TEST_CASE("HTMLParser: &nbsp; produces non-breaking space codepoint",
 }
 
 
+// ============================================================
+//  RCDATA (title, textarea)
+// ============================================================
 
 TEST_CASE("HTMLParser: <title> preserves text",
     "[html_parser][rcdata]") {
@@ -516,6 +592,9 @@ TEST_CASE("HTMLParser: </title> case-insensitive",
 }
 
 
+// ============================================================
+//  RAWTEXT (style, script)
+// ============================================================
 
 TEST_CASE("HTMLParser: <style> content kept literally",
     "[html_parser][rawtext]") {
@@ -523,7 +602,6 @@ TEST_CASE("HTMLParser: <style> content kept literally",
     auto r = parse(arena, "<style>body { color: red; }</style>");
     DOMNode* st = first_element(r.root);
     REQUIRE(st->tag_name == "style");
-    // Содержимое должно быть текстом ВНУТРИ style
     REQUIRE(all_text(st) == "body { color: red; }");
 }
 
@@ -546,13 +624,14 @@ TEST_CASE("HTMLParser: </script> closing tag detected",
 }
 
 
-
+// ============================================================
+//  Malformed
+// ============================================================
 
 TEST_CASE("HTMLParser: stray '</>' ignored",
     "[html_parser][malformed]") {
     ArenaAllocator arena;
     auto r = parse(arena, "</>");
-    // Не должно появляться узлов
     REQUIRE(r.root->children.empty());
 }
 
@@ -560,7 +639,6 @@ TEST_CASE("HTMLParser: '< ' becomes text",
     "[html_parser][malformed]") {
     ArenaAllocator arena;
     auto r = parse(arena, "< not a tag");
-    // '<' не с буквой — трактуется как текст
     REQUIRE(r.root->children.size() >= 1);
     std::string t = all_text(r.root);
     REQUIRE(t.find('<') != std::string::npos);
@@ -606,6 +684,9 @@ TEST_CASE("HTMLParser: '<' inside text as raw char",
 }
 
 
+// ============================================================
+//  Интеграция
+// ============================================================
 
 TEST_CASE("HTMLParser: minimal full document",
     "[html_parser][integration]") {
@@ -635,29 +716,32 @@ TEST_CASE("HTMLParser: minimal full document",
     REQUIRE(all_text(p) == "Hello");
 }
 
-//TEST_CASE("HTMLParser: card with mixed content",
-//    "[html_parser][integration]") {
-//    ArenaAllocator arena;
-//    auto r = parse(arena,
-//        "<div class=\"card\">"
-//        "  <h1>Title</h1>"
-//        "  <p>Some <b>bold</b> text.</p>"
-//        "  <button disabled>Click</button>"
-//        "</div>");
-//    DOMNode* card = first_element(r.root);
-//    REQUIRE(card->tag_name == "div");
-//    REQUIRE(card->attributes.at("class") == "card");
-//    REQUIRE(card->children.size() == 3);
-//
-//    DOMNode* h1 = card->children[0];
-//    REQUIRE(h1->tag_name == "h1");
-//    REQUIRE(all_text(h1) == "Title");
-//
-//    DOMNode* btn = card->children[2];
-//    REQUIRE(btn->tag_name == "button");
-//    REQUIRE(btn->attributes.count("disabled") == 1);
-//    REQUIRE(all_text(btn) == "Click");
-//}
+TEST_CASE("HTMLParser: card with mixed content",
+    "[html_parser][integration]") {
+    ArenaAllocator arena;
+    auto r = parse(arena,
+        "<div class=\"card\">"
+        "  <h1>Title</h1>"
+        "  <p>Some <b>bold</b> text.</p>"
+        "  <button disabled>Click</button>"
+        "</div>");
+    DOMNode* card = first_element(r.root);
+    REQUIRE(card->tag_name == "div");
+    REQUIRE(attr(card, "class") == "card");
+
+    // Считаем только элементы — не зависим от того,
+    // схлопывает ли парсер whitespace-only текстовые узлы.
+    REQUIRE(count_type(card, NodeType::Element) == 3);
+
+    DOMNode* h1 = find_tag(card, "h1");
+    REQUIRE(h1 != nullptr);
+    REQUIRE(all_text(h1) == "Title");
+
+    DOMNode* btn = find_tag(card, "button");
+    REQUIRE(btn != nullptr);
+    REQUIRE(has_attr(btn, "disabled"));
+    REQUIRE(all_text(btn) == "Click");
+}
 
 TEST_CASE("HTMLParser: comment + doctype + element",
     "[html_parser][integration]") {
@@ -676,19 +760,19 @@ TEST_CASE("HTMLParser: numeric entity in attribute",
     "[html_parser][attr][entity]") {
     ArenaAllocator arena;
     auto r = parse(arena, R"(<div title="&#65;&#x42;"></div>)");
-    REQUIRE(first_element(r.root)->attributes.at("title") == "AB");
+    REQUIRE(attr(first_element(r.root), "title") == "AB");
 }
 
 TEST_CASE("HTMLParser: entity at start of attribute value",
     "[html_parser][attr][entity]") {
     ArenaAllocator arena;
     auto r = parse(arena, R"(<div title="&amp;start"></div>)");
-    REQUIRE(first_element(r.root)->attributes.at("title") == "&start");
+    REQUIRE(attr(first_element(r.root), "title") == "&start");
 }
 
 TEST_CASE("HTMLParser: entity at end of attribute value",
     "[html_parser][attr][entity]") {
     ArenaAllocator arena;
     auto r = parse(arena, R"(<div title="end&amp;"></div>)");
-    REQUIRE(first_element(r.root)->attributes.at("title") == "end&");
+    REQUIRE(attr(first_element(r.root), "title") == "end&");
 }

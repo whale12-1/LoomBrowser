@@ -8,6 +8,8 @@
 #include <QDebug>
 
 #include <algorithm>
+#include <string_view>
+#include <memory_resource>
 #include <cctype>
 #include <string>
 #include <vector>
@@ -35,18 +37,27 @@ namespace bindings {
         // ---------- общие предикаты ----------
         struct FindByIdCtx { std::string id; };
 
+        inline QString qs_from_pmr(const std::pmr::string& s) {
+            return QString::fromUtf8(s.data(), int(s.size()));
+        }
+
         bool matchId(const DOMNode* n, void* vctx) {
             auto* c = static_cast<FindByIdCtx*>(vctx);
-            auto it = n->attributes.find("id");
-            bool match = (it != n->attributes.end() && it->second == c->id);
-            // диагностика — удалить после проверки
-            if (it != n->attributes.end()) {
+            for (const auto& kv : n->attributes) {
+                std::string_view k(kv.first.data(), kv.first.size());
+                if (k != "id") continue;
+
+                std::string_view v(kv.second.data(), kv.second.size());
+                const bool match = (v == c->id);
+
+                // диагностика — удалить после проверки
                 qDebug() << "[matchId] looking for" << QString::fromStdString(c->id)
-                    << "node" << QString::fromStdString(n->tag_name)
-                    << "has id =" << QString::fromStdString(it->second)
+                    << "node" << qs_from_pmr(n->tag_name)
+                    << "has id =" << QString::fromUtf8(v.data(), int(v.size()))
                     << "match =" << match;
+                return match;
             }
-            return match;
+            return false;
         }
 
         struct QueryCtx {

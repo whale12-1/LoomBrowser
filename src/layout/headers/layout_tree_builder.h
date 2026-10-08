@@ -7,6 +7,7 @@
 #include <cctype>
 #include <cmath>
 #include <functional>
+#include <string_view>
 #include <algorithm>
 
 #include "layout_node.h"
@@ -106,7 +107,9 @@ private:
                 auto text = std::make_unique<LayoutNode>();
                 text->type = BoxType::Text;
                 text->style_soa_idx = UINT32_MAX;
-                text->text_content = child_dom->text_content;
+                // было: text->text_content = child_dom->text_content;
+                text->text_content.assign(child_dom->text_content.data(),
+                    child_dom->text_content.size());
                 node->add_child(std::move(text));
             }
             else if (child_dom->type == NodeType::Element) {
@@ -120,12 +123,14 @@ private:
         return node;
     }
 
-    static bool has_visible_text(const std::string& s) {
+    // было: static bool has_visible_text(const std::string& s)
+    static bool has_visible_text(std::string_view s) {
         for (char c : s) if (!std::isspace((unsigned char)c)) return true;
         return false;
     }
 
-    static bool isNonRendered(const std::string& tag) {
+    // было: static bool isNonRendered(const std::string& tag)
+    static bool isNonRendered(std::string_view tag) {
         return tag == "head" || tag == "style" || tag == "script" ||
             tag == "title" || tag == "meta" || tag == "link" ||
             tag == "base" || tag == "noscript" || tag == "template";

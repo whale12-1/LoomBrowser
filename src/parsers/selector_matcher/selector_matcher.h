@@ -5,16 +5,11 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <optional>
+#include <memory_resource>      // DOMNode uses std::pmr::string
 #include "./html_parser/headers/dom.h"
 #include "./css_parser/headers/css_dom.h"
 
-// ============================================================
-//  Specificity (a, b, c):
-//    a = #id
-//    b = .class + [attr] + :pseudo-class  (кроме :where)
-//    c = tag + ::pseudo-element
-//  :where() обнуляет свой вклад.
-// ============================================================
 struct Specificity {
     uint32_t a = 0, b = 0, c = 0;
 
@@ -27,34 +22,44 @@ struct Specificity {
 
 namespace css_util {
 
-    // Разбивает class-строку на слова, не аллоцируя.
+    // ------------------------------------------------------------
+    //  Единый помощник: найти значение атрибута по имени.
+    //  Итерируем attributes вручную, т.к. его ключ — std::pmr::string,
+    //  а map не имеет прозрачного хэша.
+    // ------------------------------------------------------------
+    inline std::optional<std::string_view>
+        find_attr(const DOMNode* node, std::string_view name) {
+        for (const auto& kv : node->attributes) {
+            std::string_view k(kv.first.data(), kv.first.size());
+            if (k == name)
+                return std::string_view(kv.second.data(), kv.second.size());
+        }
+        return std::nullopt;
+    }
+
     inline bool has_class(const DOMNode* node, std::string_view cls) {
-        auto it = node->attributes.find("class");
-        if (it == node->attributes.end()) return false;
-        const std::string& s = it->second;
+        auto v = find_attr(node, "class");
+        if (!v) return false;
+        std::string_view s = *v;
         size_t i = 0, n = s.size();
         while (i < n) {
             while (i < n && std::isspace((unsigned char)s[i])) ++i;
             size_t start = i;
             while (i < n && !std::isspace((unsigned char)s[i])) ++i;
             if (i - start == cls.size() &&
-                std::memcmp(s.data() + start, cls.data(), cls.size()) == 0) return true;
+                std::memcmp(s.data() + start, cls.data(), cls.size()) == 0)
+                return true;
         }
         return false;
     }
 
-    inline const std::string* get_attr(const DOMNode* node, const std::string& name) {
-        auto it = node->attributes.find(name);
-        return it == node->attributes.end() ? nullptr : &it->second;
+    inline bool attr_present(const DOMNode* node, std::string_view name) {
+        return find_attr(node, name).has_value();
     }
 
-    inline bool attr_present(const DOMNode* node, const std::string& name) {
-        return node->attributes.find(name) != node->attributes.end();
-    }
-    
     // ------- attribute operators -------
-    inline bool attr_eq(const std::string& have, const std::string& want) { return have == want; }
-    inline bool attr_includes(const std::string& have, const std::string& want) {
+    inline bool attr_eq(std::string_view have, std::string_view want) { return have == want; }
+    inline bool attr_includes(std::string_view have, std::string_view want) {
         if (want.empty()) return false;
         size_t i = 0, n = have.size();
         while (i < n) {
@@ -62,27 +67,28 @@ namespace css_util {
             size_t s = i;
             while (i < n && !std::isspace((unsigned char)have[i])) ++i;
             if (i - s == want.size() &&
-                std::memcmp(have.data() + s, want.data(), want.size()) == 0) return true;
+                std::memcmp(have.data() + s, want.data(), want.size()) == 0)
+                return true;
         }
         return false;
     }
-    inline bool attr_dash(const std::string& have, const std::string& want) {
+    inline bool attr_dash(std::string_view have, std::string_view want) {
         if (have.size() < want.size()) return false;
         if (have.compare(0, want.size(), want) != 0) return false;
         return have.size() == want.size() || have[want.size()] == '-';
     }
-    inline bool attr_prefix(const std::string& h, const std::string& w) {
+    inline bool attr_prefix(std::string_view h, std::string_view w) {
         return !w.empty() && h.size() >= w.size() && h.compare(0, w.size(), w) == 0;
     }
-    inline bool attr_suffix(const std::string& h, const std::string& w) {
+    inline bool attr_suffix(std::string_view h, std::string_view w) {
         return !w.empty() && h.size() >= w.size() &&
             h.compare(h.size() - w.size(), w.size(), w) == 0;
     }
-    inline bool attr_substr(const std::string& h, const std::string& w) {
-        return !w.empty() && h.find(w) != std::string::npos;
+    inline bool attr_substr(std::string_view h, std::string_view w) {
+        return !w.empty() && h.find(w) != std::string_view::npos;
     }
 
-    // ------- pseudo-class helpers (position in parent) -------
+    // ------- nth-child helpers -------
     inline uint32_t child_index(const DOMNode* node) {
         if (!node || !node->parent) return 1;
         uint32_t i = 1;
@@ -96,17 +102,20 @@ namespace css_util {
     inline uint32_t element_child_count(const DOMNode* node) {
         if (!node || !node->parent) return 1;
         uint32_t n = 0;
-        for (DOMNode* c : node->parent->children) if (c->type == NodeType::Element) ++n;
+        for (DOMNode* c : node->parent->children)
+            if (c->type == NodeType::Element) ++n;
         return n;
     }
 
-    // Парсер an+b для :nth-child(2n+1), odd, even, 3
     inline bool parse_anb(const std::string& s, int& a, int& b) {
         std::string t;
-        for (char c : s) if (!std::isspace((unsigned char)c)) t += (char)std::tolower((unsigned char)c);
+        for (char c : s)
+            if (!std::isspace((unsigned char)c))
+                t += (char)std::tolower((unsigned char)c);
         if (t.empty()) return false;
         if (t == "odd") { a = 2; b = 1; return true; }
         if (t == "even") { a = 2; b = 0; return true; }
+
         size_t npos = t.find('n');
         if (npos == std::string::npos) {
             char* end = nullptr;
@@ -116,7 +125,7 @@ namespace css_util {
         }
         std::string as = t.substr(0, npos);
         if (as.empty() || as == "+") a = 1;
-        else if (as == "-") a = -1;
+        else if (as == "-")          a = -1;
         else {
             char* end = nullptr;
             long v = std::strtol(as.c_str(), &end, 10);
@@ -138,8 +147,6 @@ namespace css_util {
         return k <= 0 && (-k) % (-a) == 0;
     }
 
-    // Рекурсивный расчёт specificity для текста селектора
-// (используется для :not/:is/:has, где специфичность = специфичность аргумента).
     inline Specificity specificity_of_simple_text(std::string_view text);
 
     inline Specificity specificity_of_arg_list(std::string_view arg) {
@@ -150,15 +157,12 @@ namespace css_util {
             std::string_view part = (comma == std::string_view::npos)
                 ? arg.substr(start)
                 : arg.substr(start, comma - start);
-
             while (!part.empty() && std::isspace((unsigned char)part.front()))
                 part.remove_prefix(1);
             while (!part.empty() && std::isspace((unsigned char)part.back()))
                 part.remove_suffix(1);
-
             Specificity s = specificity_of_simple_text(part);
             if (max < s) max = s;
-
             if (comma == std::string_view::npos) break;
             start = comma + 1;
         }
@@ -170,7 +174,6 @@ namespace css_util {
         size_t i = 0, n = text.size();
         while (i < n) {
             char c = text[i];
-
             if (c == '*') { ++i; continue; }
 
             if (c == '.') {
@@ -189,30 +192,22 @@ namespace css_util {
                 ++i;
                 bool double_colon = false;
                 if (i < n && text[i] == ':') { double_colon = true; ++i; }
-
                 size_t name_start = i;
                 while (i < n && (std::isalnum((unsigned char)text[i]) ||
                     text[i] == '-')) ++i;
                 std::string_view name = text.substr(name_start, i - name_start);
 
                 if (i < n && text[i] == '(') {
-                    size_t depth = 1;
-                    ++i;
+                    size_t depth = 1; ++i;
                     size_t arg_start = i;
                     while (i < n && depth > 0) {
                         if (text[i] == '(') ++depth;
-                        else if (text[i] == ')') {
-                            --depth;
-                            if (depth == 0) break;
-                        }
+                        else if (text[i] == ')') { --depth; if (depth == 0) break; }
                         ++i;
                     }
                     std::string_view inner = text.substr(arg_start, i - arg_start);
                     if (i < n) ++i;
-
-                    if (name == "where") {
-                        // 0 — ничего не добавляем
-                    }
+                    if (name == "where") { /* zero */ }
                     else if (name == "not" || name == "is" || name == "has" ||
                         name == "matches" || name == "any") {
                         Specificity inner_spec = specificity_of_arg_list(inner);
@@ -220,9 +215,7 @@ namespace css_util {
                         s.b += inner_spec.b;
                         s.c += inner_spec.c;
                     }
-                    else {
-                        s.b += 1;  // :nth-child, :nth-of-type и пр.
-                    }
+                    else s.b += 1;
                 }
                 else {
                     if (double_colon) s.c += 1;
@@ -240,9 +233,7 @@ namespace css_util {
                     text[i] == '-' || text[i] == '_')) ++i;
                 s.c += 1;
             }
-            else {
-                ++i; // пробелы, '>' и прочее — пропускаем
-            }
+            else ++i;
         }
         return s;
     }
@@ -254,18 +245,15 @@ namespace css_util {
 // ============================================================
 class SelectorMatcher {
 public:
-    // Right-to-left matching of complex selector.
     static bool match_complex(DOMNode* node, const ComplexSelector& complex) {
         if (!node || complex.compounds.empty()) return false;
         if (node->type != NodeType::Element) return false;
 
         const int last = (int)complex.compounds.size() - 1;
         if (!match_compound(node, complex.compounds[last])) return false;
-
         return match_left_of(node, complex, last - 1);
     }
 
-    // Считаем специфичность один раз, кэшируется вызывающим.
     static Specificity compute_specificity(const ComplexSelector& cs) {
         Specificity s{};
         for (const auto& comp : cs.compounds) {
@@ -280,13 +268,9 @@ public:
                     if (p.name == "not" || p.name == "is" || p.name == "has" ||
                         p.name == "matches" || p.name == "any") {
                         Specificity inner = css_util::specificity_of_arg_list(p.arg);
-                        s.a += inner.a;
-                        s.b += inner.b;
-                        s.c += inner.c;
+                        s.a += inner.a; s.b += inner.b; s.c += inner.c;
                     }
-                    else {
-                        s.b += 1;
-                    }
+                    else s.b += 1;
                     break;
                 case K::PseudoElement: s.c += 1; break;
                 case K::Tag:           s.c += 1; break;
@@ -298,10 +282,8 @@ public:
     }
 
 private:
-    // Рекурсивный обход «левой части» селектора справа налево.
     static bool match_left_of(DOMNode* node, const ComplexSelector& cs, int comp_idx) {
         if (comp_idx < 0) return true;
-
         const Combinator comb = cs.compounds[comp_idx + 1].combinator;
         const CompoundSelector& target = cs.compounds[comp_idx];
 
@@ -352,9 +334,8 @@ private:
 
     static bool match_compound(DOMNode* node, const CompoundSelector& compound) {
         if (!node || node->type != NodeType::Element) return false;
-        for (const auto& s : compound.parts) {
+        for (const auto& s : compound.parts)
             if (!match_simple(node, s)) return false;
-        }
         return true;
     }
 
@@ -365,16 +346,15 @@ private:
             return true;
 
         case K::Tag:
-            // HTML-теги нечувствительны к регистру; для SVG — нет,
-            // но у нас DOM и так хранит lowercase.
-            return node->tag_name == s.name;
+            return std::string_view(node->tag_name.data(), node->tag_name.size())
+                == s.name;
 
         case K::Class:
             return css_util::has_class(node, s.name);
 
         case K::Id: {
-            auto it = node->attributes.find("id");
-            return it != node->attributes.end() && it->second == s.name;
+            auto v = css_util::find_attr(node, "id");
+            return v && *v == s.name;
         }
 
         case K::Attribute:
@@ -384,17 +364,15 @@ private:
             return match_pseudo(node, s);
 
         case K::PseudoElement:
-            // Псевдоэлементы не матчатся на самом DOM-узле;
-            // их обрабатывает layout (::before/::after — генерируемый контент).
             return false;
         }
         return false;
     }
 
     static bool match_attr(DOMNode* node, const SimpleSelector& s) {
-        const std::string* have = css_util::get_attr(node, s.name);
+        auto have = css_util::find_attr(node, s.name);
         if (!have) return false;
-        if (s.op.empty()) return true;    // [attr]
+        if (s.op.empty()) return true;
         if (s.op == "=")  return css_util::attr_eq(*have, s.arg);
         if (s.op == "~=") return css_util::attr_includes(*have, s.arg);
         if (s.op == "|=") return css_util::attr_dash(*have, s.arg);
@@ -407,68 +385,60 @@ private:
     static bool match_pseudo(DOMNode* node, const SimpleSelector& s) {
         const std::string& n = s.name;
 
-        // --- структурные ---
         if (n == "first-child")  return css_util::child_index(node) == 1;
-        if (n == "last-child")   return css_util::child_index(node) == css_util::element_child_count(node);
+        if (n == "last-child")   return css_util::child_index(node) ==
+            css_util::element_child_count(node);
         if (n == "only-child")   return css_util::element_child_count(node) == 1;
         if (n == "empty") {
             for (DOMNode* c : node->children) {
                 if (c->type == NodeType::Element) return false;
-                if (c->type == NodeType::Text && !c->text_content.empty()) return false;
+                if (c->type == NodeType::Text && !c->text_content.empty())
+                    return false;
             }
             return true;
         }
-        if (n == "root") return node->parent == nullptr || node->parent->type != NodeType::Element;
+        if (n == "root")
+            return node->parent == nullptr || node->parent->type != NodeType::Element;
 
         if (n == "nth-child" || n == "nth-last-child") {
             int a = 0, b = 0;
             if (!css_util::parse_anb(s.arg, a, b)) return false;
             uint32_t idx = css_util::child_index(node);
-            if (n == "nth-last-child") {
+            if (n == "nth-last-child")
                 idx = css_util::element_child_count(node) + 1 - idx;
-            }
             return css_util::nth_match((int)idx, a, b);
         }
         if (n == "first-of-type" || n == "last-of-type" ||
             n == "nth-of-type" || n == "nth-last-of-type") {
-            // Считаем позицию только среди элементов с тем же tag_name
-            uint32_t idx = 1, total = 0;
             DOMNode* p = node->parent;
             if (!p) return false;
+
+            uint32_t idx = 0, total = 0;
             for (DOMNode* c : p->children) {
-                if (c->type != NodeType::Element || c->tag_name != node->tag_name) continue;
+                if (c->type != NodeType::Element) continue;
+                if (c->tag_name != node->tag_name) continue;
                 ++total;
-                if (c == node) { /* idx оставляем */ }
-                else if (total < idx || true) { if (c != node) {} }
-            }
-            // Пересчёт честный
-            idx = 0; uint32_t seen = 0;
-            for (DOMNode* c : p->children) {
-                if (c->type != NodeType::Element || c->tag_name != node->tag_name) continue;
-                ++seen;
-                if (c == node) { idx = seen; break; }
+                if (c == node) idx = total;
             }
             if (n == "first-of-type") return idx == 1;
             if (n == "last-of-type")  return idx == total;
+
             int a = 0, b = 0;
             if (!css_util::parse_anb(s.arg, a, b)) return false;
             uint32_t pos = (n == "nth-of-type") ? idx : (total + 1 - idx);
             return css_util::nth_match((int)pos, a, b);
         }
 
-        // --- логические ---
-        if (n == "not" || n == "is" || n == "where" || n == "matches" || n == "any") {
-            std::string_view arg = s.arg;             // ← было std::string
+        if (n == "not" || n == "is" || n == "where" ||
+            n == "matches" || n == "any") {
+            std::string_view arg = s.arg;
             size_t start = 0;
             bool matched = false;
-
             while (start <= arg.size()) {
                 size_t comma = arg.find(',', start);
                 std::string_view part = (comma == std::string_view::npos)
                     ? arg.substr(start)
                     : arg.substr(start, comma - start);
-
-                // trim по краям — без аллокаций
                 while (!part.empty() && std::isspace((unsigned char)part.front()))
                     part.remove_prefix(1);
                 while (!part.empty() && std::isspace((unsigned char)part.back()))
@@ -478,34 +448,30 @@ private:
                 if (comma == std::string_view::npos) break;
                 start = comma + 1;
             }
-
             if (n == "not") return !matched;
             return matched;
         }
 
-        // --- state-based: в статичном дереве НЕ матчатся ---
-// --- state-based: в статичном дереве НЕ матчатся ---
-        if (n == "hover" || n == "focus" || n == "active" || n == "target") return false;
-
-        // :visited мы не отслеживаем — считаем, что не матчится
+        if (n == "hover" || n == "focus" || n == "active" || n == "target")
+            return false;
         if (n == "visited") return false;
 
-        // :link / :any-link — <a href> и <area href>
         if (n == "link" || n == "any-link") {
-            return (node->tag_name == "a" || node->tag_name == "area") &&
-                css_util::attr_present(node, "href");
+            std::string_view tn(node->tag_name.data(), node->tag_name.size());
+            return (tn == "a" || tn == "area") && css_util::attr_present(node, "href");
         }
-        // --- прочие молча пропускаем как «не совпадает» ---
         return false;
     }
 
-    // Упрощённый матчер одного простого селектора по строке (для :not/:is).
-    // Поддерживает tag, .class, #id, [attr], :pseudo.
+    // ------------------------------------------------------------
+    //  Упрощённый матчер одного простого селектора по тексту
+    //  (используется в :not/:is/:where). Работает через string_view,
+    //  чтобы не упираться в тип ключей DOMNode::attributes.
+    // ------------------------------------------------------------
     static bool match_simple_selector_text(DOMNode* node, std::string_view text) {
         size_t i = 0, n = text.size();
         while (i < n) {
             char c = text[i];
-
             if (c == '*') { ++i; continue; }
 
             if (c == '.') {
@@ -513,29 +479,24 @@ private:
                 while (i < n && (std::isalnum((unsigned char)text[i]) ||
                     text[i] == '-' || text[i] == '_')) ++i;
                 if (i == s) return false;
-                // has_class уже принимает string_view — без копии
                 if (!css_util::has_class(node, text.substr(s, i - s))) return false;
             }
             else if (c == '#') {
                 ++i; size_t s = i;
                 while (i < n && (std::isalnum((unsigned char)text[i]) ||
                     text[i] == '-' || text[i] == '_')) ++i;
-                auto it = node->attributes.find("id");
-                if (it == node->attributes.end()) return false;
-                // сравнение std::string и string_view — без аллокации
-                if (it->second != text.substr(s, i - s)) return false;
+                auto v = css_util::find_attr(node, "id");
+                if (!v) return false;
+                if (*v != text.substr(s, i - s)) return false;
             }
             else if (c == ':') {
                 ++i; if (i < n && text[i] == ':') ++i;
                 size_t s = i;
                 while (i < n && (std::isalnum((unsigned char)text[i]) ||
                     text[i] == '-')) ++i;
-
                 SimpleSelector ps;
                 ps.kind = SimpleSelector::Kind::PseudoClass;
-                ps.name.assign(text.data() + s, i - s);   // одна неизбежная аллокация:
-                // match_pseudo сравнивает name
-                // со std::string литералами
+                ps.name.assign(text.data() + s, i - s);
                 if (!match_pseudo(node, ps)) return false;
             }
             else if (c == '[') {
@@ -552,23 +513,19 @@ private:
                 std::string_view val;
                 if (eq != std::string_view::npos) {
                     val = body.substr(eq + 1);
-                    if (val.size() >= 2 && (val.front() == '"' || val.front() == '\''))
+                    if (val.size() >= 2 &&
+                        (val.front() == '"' || val.front() == '\''))
                         val = val.substr(1, val.size() - 2);
                 }
-
-                // get_attr принимает const std::string& — единственная копия имени,
-                // но только при встрече с [attr]. В горячем цикле :is/:not(.x) сюда
-                // не попадаем.
-                auto it = node->attributes.find(std::string(name));
-                if (it == node->attributes.end()) return false;
-                if (eq != std::string_view::npos && it->second != val) return false;
+                auto v = css_util::find_attr(node, name);
+                if (!v) return false;
+                if (eq != std::string_view::npos && *v != val) return false;
                 i = close + 1;
             }
             else if (std::isalpha((unsigned char)c)) {
                 size_t s = i;
                 while (i < n && (std::isalnum((unsigned char)text[i]) ||
                     text[i] == '-' || text[i] == '_')) ++i;
-                // сравнение std::string ↔ string_view
                 if (std::string_view(node->tag_name.data(), node->tag_name.size())
                     != text.substr(s, i - s)) return false;
             }

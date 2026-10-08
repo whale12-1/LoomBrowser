@@ -1,25 +1,47 @@
 #pragma once
 #include <string>
-#include <vector>
-#include <unordered_map>
 #include <iostream>
+#include <memory_resource>
+#include <unordered_map>
+#include "../../arena_memory_allocator/headers/arena.h"
 
-enum class NodeType {
-    Document,
-    Element,
-    Text,
-    Comment,
-    Doctype
-};
+enum class NodeType { Document, Element, Text, Comment, Doctype };
+
+// Thread-local текущий PMR-ресурс. ”станавливаетс€ в HTMLParser::parse
+// и CSSParser::parse на врем€ разбора Ч все pmr-контейнеры внутри
+// созданных узлов будут аллоцироватьс€ в арене парсера.
+inline ArenaMemoryResource*& current_arena_resource() {
+    static thread_local ArenaMemoryResource* r = nullptr;
+    return r;
+}
+
+// ’елпер: возвращает ресурс дл€ новых контейнеров.
+// ≈сли current_arena_resource не установлен (например, в тестах),
+// падаем на дефолтный Ч обычный new/delete.
+inline std::pmr::memory_resource* pmr() {
+    auto* r = current_arena_resource();
+    return r ? static_cast<std::pmr::memory_resource*>(r)
+        : std::pmr::get_default_resource();
+}
 
 struct DOMNode {
     NodeType type = NodeType::Element;
-    std::string tag_name;         // дл€ Element Ч им€ тега (в нижнем регистре)
-    std::string text_content;     // дл€ Text Ч текст, дл€ Comment Ч тело, дл€ Doctype Ч содержимое
-    std::unordered_map<std::string, std::string> attributes;
+    std::pmr::string tag_name;
+    std::pmr::string text_content;
+
+    //  лючи и значени€ тоже pmr Ч иначе кажда€ пара (attr,value) утечЄт
+    std::pmr::unordered_map<std::pmr::string, std::pmr::string> attributes;
 
     DOMNode* parent = nullptr;
-    std::vector<DOMNode*> children;
+    std::pmr::vector<DOMNode*> children;
+
+    DOMNode()
+        : tag_name(pmr())
+        , text_content(pmr())
+        , attributes(pmr())
+        , children(pmr())
+    {
+    }
 
     void add_child(DOMNode* child) {
         if (!child) return;
@@ -27,7 +49,6 @@ struct DOMNode {
         children.push_back(child);
     }
 };
-
 // –екурсивный вывод DOM-дерева в консоль дл€ отладки
 inline void print_dom(const DOMNode* node, int depth = 0) {
     if (!node) return;

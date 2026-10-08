@@ -1,47 +1,57 @@
 ﻿#pragma once
 #include <algorithm>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 #include <cstdlib>
+#include <cctype>
 #include <cmath>
+#include <optional>
+#include <memory_resource>      // DOMNode uses std::pmr::string
 #include "style_storage_soa.h"
 #include "selector_matcher.h"
-#include "style_origin.h"     // ← добавить
+#include "style_origin.h"
+
+// ============================================================
+//  Прозрачный хэш: позволяет unordered_map<std::string, ...>::find(string_view)
+//  без временной std::string.
+// ============================================================
+struct SvHash {
+    using is_transparent = void;
+    size_t operator()(std::string_view sv) const noexcept {
+        return std::hash<std::string_view>{}(sv);
+    }
+    size_t operator()(const std::string& s) const noexcept {
+        return std::hash<std::string_view>{}(std::string_view(s.data(), s.size()));
+    }
+};
 
 // ============================================================
 //  Индекс правил по «правому краю» complex-селектора.
-//  Позволяет не проверять ВСЕ правила для каждого узла, а лишь те,
-//  чей последний compound содержит #id, .class, tag или *.
-//
-//  Это ключевая оптимизация: O(N * M) → O(N * k), где k << M.
 // ============================================================
 class StyleRuleIndex {
 public:
-    // Ссылка на таблицу стилей + её origin.
     struct SheetRef {
         const StyleSheet* sheet;
         Origin origin;
     };
 
-    // Индексы вместо указателей — невосприимчиво к реаллокации rules/selectors.
     struct Entry {
-        uint32_t    sheet_index = 0;   // в sheets_
-        uint32_t    rule_index = 0;   // в sheet->rules
-        uint32_t    selector_index = 0;   // в rule.selectors
+        uint32_t    sheet_index = 0;
+        uint32_t    rule_index = 0;
+        uint32_t    selector_index = 0;
         Specificity spec;
-        uint32_t    order = 0;   // глобальный порядок across всех sheets
+        uint32_t    order = 0;
         Origin      origin = Origin::Author;
     };
 
     StyleRuleIndex() = default;
 
-    // Старый API — один author-sheet (обратная совместимость).
     explicit StyleRuleIndex(const StyleSheet& sheet) {
         sheets_.push_back({ &sheet, Origin::Author });
     }
 
-    // Новый API — несколько таблиц с разными origins.
     void build(const std::vector<SheetRef>& sheets) {
         id_buckets_.clear();
         class_buckets_.clear();
@@ -84,39 +94,61 @@ public:
         }
     }
 
-   
-    // Старый build() без аргументов — используется в конструкторе-обёртке.
     void build() {
         if (!sheets_.empty()) build(sheets_);
     }
 
+    // ============================================================
+    //  Сбор matched entries для узла.
+    //  ВАЖНО: attributes в DOMNode — это std::pmr::unordered_map,
+    //  поэтому обычный find(std::string_view) не компилируется.
+    //  Итерируем вручную (attributes малы) и берём значения как string_view.
+    // ============================================================
     void collect(const DOMNode* node, std::vector<uint32_t>& out) const {
-        auto it_id = node->attributes.find("id");
-        if (it_id != node->attributes.end()) {
-            auto b = id_buckets_.find(it_id->second);
+        using std::string_view;
+
+        string_view id_val;
+        string_view cls_val;
+        bool has_id = false;
+
+        for (const auto& kv : node->attributes) {
+            string_view k(kv.first.data(), kv.first.size());
+            if (k == "id") {
+                id_val = string_view(kv.second.data(), kv.second.size());
+                has_id = true;
+            }
+            else if (k == "class") {
+                cls_val = string_view(kv.second.data(), kv.second.size());
+            }
+        }
+
+        if (has_id) {
+            auto b = id_buckets_.find(id_val);
             if (b != id_buckets_.end())
                 out.insert(out.end(), b->second.begin(), b->second.end());
         }
 
-        auto it_cls = node->attributes.find("class");
-        if (it_cls != node->attributes.end()) {
-            const std::string& s = it_cls->second;
-            size_t i = 0, n = s.size();
+        // class может содержать несколько токенов через пробелы
+        {
+            size_t i = 0, n = cls_val.size();
             while (i < n) {
-                while (i < n && std::isspace((unsigned char)s[i])) ++i;
+                while (i < n && std::isspace((unsigned char)cls_val[i])) ++i;
                 size_t st = i;
-                while (i < n && !std::isspace((unsigned char)s[i])) ++i;
+                while (i < n && !std::isspace((unsigned char)cls_val[i])) ++i;
                 if (i > st) {
-                    auto b = class_buckets_.find(s.substr(st, i - st));
+                    auto b = class_buckets_.find(cls_val.substr(st, i - st));
                     if (b != class_buckets_.end())
                         out.insert(out.end(), b->second.begin(), b->second.end());
                 }
             }
         }
 
-        auto bt = tag_buckets_.find(node->tag_name);
-        if (bt != tag_buckets_.end())
-            out.insert(out.end(), bt->second.begin(), bt->second.end());
+        {
+            string_view tag_sv(node->tag_name.data(), node->tag_name.size());
+            auto bt = tag_buckets_.find(tag_sv);
+            if (bt != tag_buckets_.end())
+                out.insert(out.end(), bt->second.begin(), bt->second.end());
+        }
 
         out.insert(out.end(), universal_bucket_.begin(), universal_bucket_.end());
     }
@@ -164,15 +196,16 @@ private:
     }
 
     std::vector<SheetRef> sheets_;
-    std::unordered_map<std::string, std::vector<uint32_t>> id_buckets_;
-    std::unordered_map<std::string, std::vector<uint32_t>> class_buckets_;
-    std::unordered_map<std::string, std::vector<uint32_t>> tag_buckets_;
+
+    std::unordered_map<std::string, std::vector<uint32_t>, SvHash, std::equal_to<>> id_buckets_;
+    std::unordered_map<std::string, std::vector<uint32_t>, SvHash, std::equal_to<>> class_buckets_;
+    std::unordered_map<std::string, std::vector<uint32_t>, SvHash, std::equal_to<>> tag_buckets_;
     std::vector<uint32_t> universal_bucket_;
     std::vector<Entry>    entries_;
 };
 
 // ============================================================
-//  Builder
+//  Builder — логика без изменений.
 // ============================================================
 class StyleTreeBuilder {
 public:
@@ -199,11 +232,7 @@ public:
         });
     }
 
-
 private:
-    // -------------------------------------------------------------
-    //  DFS
-    // -------------------------------------------------------------
     static uint32_t dfs_build(DOMNode* node, uint32_t parent_idx,
         const StyleRuleIndex& index,
         std::vector<uint32_t>& scratch,
@@ -219,12 +248,10 @@ private:
         for (DOMNode* child : node->children) {
             uint32_t cidx = dfs_build(child, idx, index, scratch, storage);
             if (cidx != INVALID_INDEX) {
-                if (storage.first_child_indices[idx] == INVALID_INDEX) {
+                if (storage.first_child_indices[idx] == INVALID_INDEX)
                     storage.first_child_indices[idx] = cidx;
-                }
-                if (prev_child != INVALID_INDEX) {
+                if (prev_child != INVALID_INDEX)
                     storage.next_sibling_indices[prev_child] = cidx;
-                }
                 storage.last_child_indices[idx] = cidx;
                 prev_child = cidx;
             }
@@ -232,11 +259,8 @@ private:
         return idx;
     }
 
-    // -------------------------------------------------------------
-    //  Каскад: собрать matched declarations, разрешить конфликты
-    // -------------------------------------------------------------
     struct Winner {
-        uint32_t    sheet_index = UINT32_MAX;   // UINT32_MAX = «нет победителя»
+        uint32_t    sheet_index = UINT32_MAX;
         uint32_t    rule_index = UINT32_MAX;
         uint32_t    decl_index = 0;
         Specificity spec;
@@ -246,27 +270,15 @@ private:
 
         bool empty() const { return rule_index == UINT32_MAX; }
 
-        // Порядок проверок — как в CSS Cascading and Inheritance Level 4:
-        //   1. Origin + Importance (одним блоком, т.к. !important инвертирует origin)
-        //   2. Specificity
-        //   3. Order of appearance
         bool dominates(const Winner& o) const {
-            // 1a. !important всегда бьёт normal
             if (important != o.important) return important;
-
-            // 1b. Origin. Для normal Author > User > UA,
-            //     для important порядок инвертирован: UA > User > Author.
             if (origin != o.origin) {
                 if (!important) return origin > o.origin;
-                /*important*/   return origin < o.origin;
+                return origin < o.origin;
             }
-
-            // 2. Specificity
             if (spec.a != o.spec.a) return spec.a > o.spec.a;
             if (spec.b != o.spec.b) return spec.b > o.spec.b;
             if (spec.c != o.spec.c) return spec.c > o.spec.c;
-
-            // 3. Source order
             return order > o.order;
         }
     };
@@ -276,7 +288,6 @@ private:
         std::vector<uint32_t>& scratch,
         StyleStorageSoA& storage)
     {
-        // 1. Сначала наследуем значения от родителя (чтобы parent_fs был актуален!)
         if (parent_idx != INVALID_INDEX)
             inherit_from_parent(idx, parent_idx, storage);
 
@@ -305,7 +316,7 @@ private:
                 w.spec = entry.spec;
                 w.order = entry.order;
                 w.important = d.important;
-                w.origin = entry.origin;      // ← ключевое дополнение
+                w.origin = entry.origin;
 
                 const size_t pi = style::prop_index(p);
                 if (winners[pi].empty() || w.dominates(winners[pi]))
@@ -313,7 +324,6 @@ private:
             }
         }
 
-        // 2. Теперь применяем победившие декларации (они перепишут унаследованные значения)
         for (size_t pi = 0; pi < style::PROP_COUNT; ++pi) {
             if (winners[pi].empty()) continue;
             const Declaration& d = index.rule(winners[pi].sheet_index,
@@ -326,12 +336,8 @@ private:
         finalize(idx, storage);
     }
 
-    // -------------------------------------------------------------
-    //  Маппинг property-name → Prop
-    // -------------------------------------------------------------
     static bool lookup_prop(const std::string& name, Prop& out) {
         using P = Prop;
-        // Ключи в CSSParser уже в нижнем регистре.
         static const std::unordered_map<std::string, P> table = {
             {"display",        P::Display},
             {"position",       P::Position},
@@ -381,10 +387,6 @@ private:
         return true;
     }
 
-    // -------------------------------------------------------------
-    //  Применение одной декларации (уже победившей в каскаде).
-    //  Разворачиваем шорткаты, разрешаем em/rem для font-size.
-    // -------------------------------------------------------------
     static void apply_declaration(Prop p, const Declaration& d,
         uint32_t idx, uint32_t parent_idx,
         StyleStorageSoA& storage)
@@ -418,17 +420,10 @@ private:
             break;
         }
 
-        case Prop::Color:
-            storage.text_colors[idx] = parse_color(v).pack();
-            break;
-        case Prop::BackgroundColor:
-            storage.background_colors[idx] = parse_color(v).pack();
-            break;
+        case Prop::Color:           storage.text_colors[idx] = parse_color(v).pack(); break;
+        case Prop::BackgroundColor: storage.background_colors[idx] = parse_color(v).pack(); break;
 
         case Prop::FontSize: {
-            // parent_idx == INVALID_INDEX  ⇔  это корень (idx == 0).
-            // inherit_from_parent уже скопировал font_sizes[parent_idx] в font_sizes[idx],
-            // но резолвим em/% именно против родителя — так требует спецификация.
             const float parent_fs = (parent_idx != INVALID_INDEX)
                 ? storage.font_sizes[parent_idx]
                 : 16.0f;
@@ -449,14 +444,12 @@ private:
         case Prop::LineHeight: {
             if (v == "normal") { storage.line_heights[idx] = 0.0f; break; }
             float fs = storage.font_sizes[idx];
-            // Эвристика: если в строке есть не-числовые не-разделительные символы — это единицы.
             bool has_unit = (v.find_first_not_of("0123456789.+-eE") != std::string::npos);
             if (has_unit) {
                 Length l = parse_length(v);
-                storage.line_heights[idx] = resolve_length(l, fs, idx, storage); // px, > 0
+                storage.line_heights[idx] = resolve_length(l, fs, idx, storage);
             }
             else {
-                // unitless — храним как отрицательное значение (1.5 → -1.5)
                 float mul = std::strtof(v.c_str(), nullptr);
                 storage.line_heights[idx] = -mul;
             }
@@ -468,7 +461,6 @@ private:
                 parse_length(v), storage.font_sizes[idx], idx, storage);
             break;
 
-            // ----- размеры / отступы -----
         case Prop::Width:      storage.widths[idx] = parse_length(v); break;
         case Prop::Height:     storage.heights[idx] = parse_length(v); break;
         case Prop::MinWidth:   storage.min_widths[idx] = parse_length(v); break;
@@ -496,16 +488,9 @@ private:
         }
     }
 
-    // -------------------------------------------------------------
-    //  Наследование
-    // -------------------------------------------------------------
     static void inherit_from_parent(uint32_t idx, uint32_t parent_idx,
         StyleStorageSoA& storage)
     {
-        // Таблица наследуемых свойств — фиксирована спекой CSS.
-        // Инвариант: вызывается ДО применения explicit-деклараций,
-        // поэтому проверка is_explicit избыточна: победители каскада
-        // перезапишут унаследованные значения на шаге 2.
         static constexpr Prop kInherited[] = {
             Prop::Color,
             Prop::FontSize,
@@ -517,36 +502,28 @@ private:
             Prop::WhiteSpace,
             Prop::Visibility,
         };
-        for (Prop p : kInherited) {
+        for (Prop p : kInherited)
             copy_prop(p, parent_idx, idx, storage);
-        }
     }
 
     static void copy_prop(Prop p, uint32_t from, uint32_t to, StyleStorageSoA& s) {
         switch (p) {
-        case Prop::Color:         s.text_colors[to] = s.text_colors[from]; break;
-        case Prop::FontSize:      s.font_sizes[to] = s.font_sizes[from]; break;
-        case Prop::FontWeight:    s.font_weights[to] = s.font_weights[from]; break;
-        case Prop::FontStyle:     s.font_styles[to] = s.font_styles[from]; break;
-        case Prop::LineHeight:    s.line_heights[to] = s.line_heights[from]; break;
-        case Prop::TextAlign:     s.text_aligns[to] = s.text_aligns[from]; break;
+        case Prop::Color:         s.text_colors[to] = s.text_colors[from];     break;
+        case Prop::FontSize:      s.font_sizes[to] = s.font_sizes[from];      break;
+        case Prop::FontWeight:    s.font_weights[to] = s.font_weights[from];    break;
+        case Prop::FontStyle:     s.font_styles[to] = s.font_styles[from];     break;
+        case Prop::LineHeight:    s.line_heights[to] = s.line_heights[from];    break;
+        case Prop::TextAlign:     s.text_aligns[to] = s.text_aligns[from];     break;
         case Prop::LetterSpacing: s.letter_spacings[to] = s.letter_spacings[from]; break;
-        case Prop::WhiteSpace:    s.white_spaces[to] = s.white_spaces[from]; break;
-        case Prop::Visibility:    s.visibilities[to] = s.visibilities[from]; break;
+        case Prop::WhiteSpace:    s.white_spaces[to] = s.white_spaces[from];    break;
+        case Prop::Visibility:    s.visibilities[to] = s.visibilities[from];    break;
         default: break;
         }
     }
 
-    // -------------------------------------------------------------
-    //  Финализация: дефолты, зависящие от других полей
-    // -------------------------------------------------------------
-    static void finalize(uint32_t idx, StyleStorageSoA& s) {
-        //пока пуст
-    }
+    static void finalize(uint32_t /*idx*/, StyleStorageSoA& /*s*/) {}
 
-    // =============================================================
-    //  Парсеры значений
-    // =============================================================
+    // ---------- parsers ----------
     static Display parse_display(const std::string& v) {
         if (v == "none")         return Display::None;
         if (v == "block")        return Display::Block;
@@ -615,35 +592,32 @@ private:
         return FlexDir::Row;
     }
     static Justify parse_justify(const std::string& v) {
-        if (v == "end" || v == "flex-end")   return Justify::End;
-        if (v == "center")                    return Justify::Center;
-        if (v == "space-between")             return Justify::SpaceBetween;
-        if (v == "space-around")              return Justify::SpaceAround;
-        if (v == "space-evenly")              return Justify::SpaceEvenly;
+        if (v == "end" || v == "flex-end") return Justify::End;
+        if (v == "center")                 return Justify::Center;
+        if (v == "space-between")          return Justify::SpaceBetween;
+        if (v == "space-around")           return Justify::SpaceAround;
+        if (v == "space-evenly")           return Justify::SpaceEvenly;
         return Justify::Start;
     }
     static AlignItems parse_align_items(const std::string& v) {
         if (v == "flex-start" || v == "start") return AlignItems::FlexStart;
-        if (v == "flex-end" || v == "end")     return AlignItems::FlexEnd;
+        if (v == "flex-end" || v == "end")   return AlignItems::FlexEnd;
         if (v == "center")                     return AlignItems::Center;
         if (v == "baseline")                   return AlignItems::Baseline;
         return AlignItems::Stretch;
     }
 
-    // ---- Length ----
     static Length parse_length(const std::string& v) {
-        // trim
         size_t b = 0, e = v.size();
         while (b < e && std::isspace((unsigned char)v[b])) ++b;
         while (e > b && std::isspace((unsigned char)v[e - 1])) --e;
         if (b == e) return { 0.0f, Unit::Px };
 
         std::string s = v.substr(b, e - b);
-        if (s == "auto")   return { -1.0f, Unit::Auto };
-        if (s == "none")   return { 0.0f, Unit::None };
-        if (s == "0")      return { 0.0f, Unit::Px };
+        if (s == "auto") return { -1.0f, Unit::Auto };
+        if (s == "none") return { 0.0f, Unit::None };
+        if (s == "0")    return { 0.0f, Unit::Px };
 
-        // split числовая часть / единица
         size_t i = 0;
         if (i < s.size() && (s[i] == '+' || s[i] == '-')) ++i;
         while (i < s.size() && std::isdigit((unsigned char)s[i])) ++i;
@@ -656,17 +630,15 @@ private:
             if (j < s.size() && (s[j] == '+' || s[j] == '-')) ++j;
             const size_t digits_start = j;
             while (j < s.size() && std::isdigit((unsigned char)s[j])) ++j;
-            if (j > digits_start) i = j;   // принимаем 'e' только при наличии цифр после
+            if (j > digits_start) i = j;
         }
 
-        if (i == 0) return { 0.0f, Unit::Px };   // не число вовсе
+        if (i == 0) return { 0.0f, Unit::Px };
 
         float val = 0.0f;
         try { val = std::stof(s.substr(0, i)); }
         catch (...) { return { 0.0f, Unit::Px }; }
         std::string u = s.substr(i);
-
-
         for (char& c : u) c = (char)std::tolower((unsigned char)c);
 
         Unit unit = Unit::Px;
@@ -687,7 +659,6 @@ private:
     }
 
     static float resolve_rem(const StyleStorageSoA& s, uint32_t idx) {
-        // idx == 0 — это сам корень; по спеке rem для корня = initial (16px)
         if (idx == 0 || s.font_sizes.empty()) return 16.0f;
         return s.font_sizes[0];
     }
@@ -709,7 +680,7 @@ private:
         switch (l.unit) {
         case Unit::Px:      return l.value;
         case Unit::Em:      return l.value * parent_fs;
-        case Unit::Rem:     return l.value * resolve_rem(s, idx);   // ← было 16.0f
+        case Unit::Rem:     return l.value * resolve_rem(s, idx);
         case Unit::Percent: return l.value * 0.01f * parent_fs;
         case Unit::Pt:      return l.value * 96.0f / 72.0f;
         default:            return parent_fs;
@@ -721,16 +692,14 @@ private:
         switch (l.unit) {
         case Unit::Px:      return l.value;
         case Unit::Em:      return l.value * font_size;
-        case Unit::Rem:     return l.value * resolve_rem(s, idx);   // ← было 16.0f
-        case Unit::Percent: return 0.0f;    // % от контейнера → layout
+        case Unit::Rem:     return l.value * resolve_rem(s, idx);
+        case Unit::Percent: return 0.0f;
         case Unit::Pt:      return l.value * 96.0f / 72.0f;
         default:            return l.value;
         }
     }
 
-    // ---- Цвет ----
     static style::Color parse_color(const std::string& v) {
-        // #rgb #rgba #rrggbb #rrggbbaa
         if (!v.empty() && v[0] == '#') {
             std::string h = v.substr(1);
             auto hex1 = [](char c) -> uint8_t {
@@ -739,27 +708,22 @@ private:
                 if (c >= 'A' && c <= 'F') return (uint8_t)(10 + c - 'A');
                 return 0;
                 };
-            if (h.size() == 3) {
+            if (h.size() == 3)
                 return { (uint8_t)(hex1(h[0]) * 17), (uint8_t)(hex1(h[1]) * 17),
                          (uint8_t)(hex1(h[2]) * 17), 255 };
-            }
-            if (h.size() == 4) {
+            if (h.size() == 4)
                 return { (uint8_t)(hex1(h[0]) * 17), (uint8_t)(hex1(h[1]) * 17),
                          (uint8_t)(hex1(h[2]) * 17), (uint8_t)(hex1(h[3]) * 17) };
-            }
-            if (h.size() == 6) {
+            if (h.size() == 6)
                 return { (uint8_t)((hex1(h[0]) << 4) | hex1(h[1])),
                          (uint8_t)((hex1(h[2]) << 4) | hex1(h[3])),
                          (uint8_t)((hex1(h[4]) << 4) | hex1(h[5])), 255 };
-            }
-            if (h.size() == 8) {
+            if (h.size() == 8)
                 return { (uint8_t)((hex1(h[0]) << 4) | hex1(h[1])),
                          (uint8_t)((hex1(h[2]) << 4) | hex1(h[3])),
                          (uint8_t)((hex1(h[4]) << 4) | hex1(h[5])),
                          (uint8_t)((hex1(h[6]) << 4) | hex1(h[7])) };
-            }
         }
-        // rgb()/rgba() — базовый парсинг
         if (v.rfind("rgb", 0) == 0) {
             size_t lp = v.find('('), rp = v.find(')');
             if (lp != std::string::npos && rp != std::string::npos) {
@@ -777,15 +741,13 @@ private:
                     if (inner[s] == '%') { ++s; }
                     vals[k++] = std::atoi(inner.substr(s, i - s).c_str());
                 }
-                // упрощение: если % — уже не важно, клампим
-                for (int i2 = 0; i2 < 3; ++i2) {
-                    if (vals[i2] < 0) vals[i2] = 0;
-                    if (vals[i2] > 255) vals[i2] = 255;
+                for (int j = 0; j < 3; ++j) {
+                    if (vals[j] < 0) vals[j] = 0;
+                    if (vals[j] > 255) vals[j] = 255;
                 }
                 return { (uint8_t)vals[0], (uint8_t)vals[1], (uint8_t)vals[2], (uint8_t)vals[3] };
             }
         }
-        // named (минимум)
         static const std::unordered_map<std::string, uint32_t> named = {
             {"black", 0x000000FF}, {"white", 0xFFFFFFFF}, {"red", 0xFF0000FF},
             {"green", 0x008000FF}, {"blue", 0x0000FFFF}, {"yellow", 0xFFFF00FF},

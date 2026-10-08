@@ -157,17 +157,6 @@ void Page::rebuild() {
     // 2. Каскад в SoA.
     storage_ = StyleTreeBuilder::build(document_, sources);
 
-    // ДИАГНОСТИКА — удалить после проверки
-    for (uint32_t i = 0; i < storage_.size(); ++i) {
-        auto* d = storage_.dom_nodes[i];
-        if (d && d->tag_name == "h1") {
-            qDebug() << "[rebuild] h1 children:";
-            for (auto* c : d->children) {
-                qDebug() << "  type:" << int(c->type)
-                    << "text:" << QString::fromStdString(c->text_content);
-            }
-        }
-    }
 
     // 3. Layout с текстовыми метриками (Qt или эвристика).
     layout_ = LayoutTreeBuilder::build(storage_);

@@ -17,6 +17,12 @@ public:
     DOMNode* parse(const std::string& html) {
         reset(html);
 
+        // Устанавливаем arena resource на текущую арену.
+        // Все DOMNode-объекты и их PMR-векторы будут аллоцироваться здесь.
+        ArenaMemoryResource res(&arena_);
+        auto* prev = current_arena_resource();
+        current_arena_resource() = &res;
+
         DOMNode* root = arena_.Alloc<DOMNode>();
         root->type = NodeType::Document;
         root->tag_name = "#document";
@@ -28,6 +34,10 @@ public:
             ++pos_;
         }
         flush_text_buffer();
+
+        // Восстанавливаем предыдущее значение на случай вложенных парсеров.
+        current_arena_resource() = prev;
+
         return root;
     }
 
@@ -247,7 +257,9 @@ private:
         if (text_buffer_.empty()) return;
         DOMNode* text_node = arena_.Alloc<DOMNode>();
         text_node->type = NodeType::Text;
-        text_node->text_content = std::move(text_buffer_);
+        // std::string → std::pmr::string через string_view.
+        // assign(data, size) выделит буфер через pmr() → арену.
+        text_node->text_content.assign(text_buffer_.data(), text_buffer_.size());
         text_buffer_.clear();
         if (!stack_.empty()) stack_.back()->add_child(text_node);
     }
@@ -259,10 +271,16 @@ private:
             buffer_.clear();
             return;
         }
-        // Атрибуты в DOM храним в нижнем регистре
+
+        // Ключ и значение — обычные std::string в парсере.
+        // Копируем в pmr-строки через assign(data, size).
         std::string name = current_attr_name_;
         for (char& ch : name) ch = to_lower(ch);
-        current_node_->attributes[name] = current_attr_value_;
+
+        auto& slot = current_node_->attributes[std::pmr::string(
+            name.data(), name.size(), pmr())];
+        slot.assign(current_attr_value_.data(), current_attr_value_.size());
+
         current_attr_name_.clear();
         current_attr_value_.clear();
         buffer_.clear();
@@ -272,7 +290,7 @@ private:
         if (is_end_tag_) {
             // Закрывающий тег: ищем соответствующий элемент в стеке
             for (size_t i = stack_.size(); i-- > 1; ) {
-                if (stack_[i]->tag_name == current_tag_name_) {
+                if (std::string_view(stack_[i]->tag_name) == std::string_view(current_tag_name_)) {
                     stack_.resize(i);
                     break;
                 }
@@ -286,7 +304,7 @@ private:
                 node = arena_.Alloc<DOMNode>();
             }
             node->type = NodeType::Element;
-            node->tag_name = current_tag_name_;
+            node->tag_name.assign(current_tag_name_.data(), current_tag_name_.size());
 
             stack_.back()->add_child(node);
 
@@ -329,7 +347,7 @@ private:
     void emit_raw_end_tag(const std::string& tag) {
         flush_text_buffer();          // ← flush в текущий верхний стек-элемент
         for (size_t i = stack_.size(); i-- > 1; ) {
-            if (stack_[i]->tag_name == tag) {
+            if (std::string_view(stack_[i]->tag_name) == std::string_view(tag)) {
                 stack_.resize(i);
                 break;
             }

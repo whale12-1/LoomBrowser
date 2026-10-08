@@ -105,7 +105,9 @@ namespace bindings {
         JSValue get_tagName(JSContext* ctx, JSValueConst this_val) {
             DOMNode* n = nullptr; Page* page = nullptr;
             if (!thisIsElement(ctx, this_val, n, page)) return JS_NULL;
-            std::string t = n->tag_name;
+
+            // было: std::string t = n->tag_name;  // pmr::string -> std::string неявно запрещено
+            std::string t(n->tag_name.data(), n->tag_name.size());
             for (char& c : t) c = (char)std::toupper((unsigned char)c);
             return JS_NewStringLen(ctx, t.data(), t.size());
         }
@@ -176,7 +178,10 @@ namespace bindings {
             const std::string name(cls);
             JS_FreeCString(ctx, cls);
 
-            std::string& cl = n->attributes["class"];
+            // берём pmr-значение по ссылке, но работаем через локальную std::string
+            std::pmr::string& cl_pmr = n->attributes["class"];
+            std::string cl(cl_pmr.data(), cl_pmr.size());
+
             std::vector<std::string> parts;
             size_t i = 0;
             while (i < cl.size()) {
@@ -203,6 +208,8 @@ namespace bindings {
                 if (k) cl += ' ';
                 cl += parts[k];
             }
+            cl_pmr.assign(cl.data(), cl.size());
+
             if (magic != 3) page->markDirty();
             return JS_NewBool(ctx, result);
         }
@@ -220,9 +227,14 @@ namespace bindings {
             const char* p = JS_ToCString(ctx, argv[0]);
             const char* v = JS_ToCString(ctx, argv[1]);
             if (p && v) {
-                std::string& style = n->attributes["style"];
+                // auto& — чтобы не привязываться к std::string&
+                std::pmr::string& style = n->attributes["style"];
                 if (!style.empty() && style.back() != ';') style += ';';
-                style += ' '; style += p; style += ": "; style += v; style += ';';
+                style += ' ';
+                style += p;         // const char*
+                style += ": ";
+                style += v;         // const char*
+                style += ';';
             }
             if (p) JS_FreeCString(ctx, p);
             if (v) JS_FreeCString(ctx, v);

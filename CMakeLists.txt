@@ -1,6 +1,21 @@
 ﻿cmake_minimum_required(VERSION 3.20)
 project(ToyBrowserEngine LANGUAGES CXX C)
 
+option(TOYBROWSER_FUZZING "Build libFuzzer targets" OFF)
+
+if(TOYBROWSER_FUZZING)
+    # Fuzzing требует Clang (или clang-cl на Windows)
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        message(FATAL_ERROR
+            "Fuzzing requires Clang. Use clang++ or clang-cl.")
+    endif()
+
+    # На Linux/macOS включаем фаззер как линковку main
+    # На Windows фаззер в clang-cl работает через -fsanitize=fuzzer
+    add_compile_options(-fsanitize=fuzzer-no-link,address,undefined
+                        -fno-omit-frame-pointer -g -O1)
+endif()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -202,4 +217,9 @@ if(WIN32 AND TARGET ToyBrowserEngine)
     else()
         message(WARNING "Could not find OpenSSL DLLs to copy!")
     endif()
+endif()
+
+
+if(TOYBROWSER_FUZZING)
+    add_subdirectory(fuzz)
 endif()
