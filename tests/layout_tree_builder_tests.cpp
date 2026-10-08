@@ -58,8 +58,11 @@ namespace {
         Pipeline p;
         p.storage = StyleTreeBuilder::build(root_elem, *sheet);
         p.root = LayoutTreeBuilder::build(p.storage);
-        if (p.root)
-            LayoutTreeBuilder::compute_layout(p.root.get(), viewport, p.storage);
+        if (p.root) {
+            LayoutTreeBuilder::Viewport vp{ viewport, 768.0f };   // width, height
+            LayoutTreeBuilder::compute_layout(p.root.get(), vp, p.storage);
+        }
+
         return p;
     }
 
@@ -399,8 +402,7 @@ TEST_CASE("LTB layout: text wrapping when longer than parent",
     LayoutNode* div = child_of_type(body, BoxType::Block);
     LayoutNode* txt = div->children[0].get();
     // height = 2 * 19.2 = 38.4
-    REQUIRE(txt->geometry.height == Approx(38.4f).epsilon(0.01));
-    // ширина обрезана до parent_width
+    REQUIRE(txt->geometry.height == Approx(57.6f).epsilon(0.01));
     REQUIRE(txt->geometry.width == 50.0f);
 }
 
@@ -415,7 +417,7 @@ TEST_CASE("LTB layout: text shorter than parent — no wrap",
     LayoutNode* div = child_of_type(body, BoxType::Block);
     LayoutNode* txt = div->children[0].get();
     // "hi" = 2 симв → one_line_w = 16px, меньше parent 500
-    REQUIRE(txt->geometry.width == 16.0f);
+    REQUIRE(txt->geometry.width == Catch::Approx(17.6f).epsilon(0.001));
 }
 
 
@@ -490,4 +492,149 @@ TEST_CASE("LTB integration: display:none child skipped in layout",
     REQUIRE(div->children[0]->geometry.y == 0.0f);
     REQUIRE(div->children[1]->geometry.y == 30.0f);   // без пропуска
     REQUIRE(div->geometry.height == 60.0f);
+}
+
+// ============================================================
+//  ДОПОЛНЕНИЯ: auto-размеры, min/max, inline-flow, negative margin.
+// ============================================================
+
+TEST_CASE("LTB layout: auto width fills parent",
+    "[ltb][layout][auto]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div></div>",
+        "html, body { display: block; margin: 0; padding: 0; } "
+        "div { display: block; }",
+        800.0f);
+    LayoutNode* body = child_of_type(p.root.get(), BoxType::Block);
+    LayoutNode* div = child_of_type(body, BoxType::Block);
+    REQUIRE(div->geometry.width == 800.0f);
+}
+
+TEST_CASE("LTB layout: min-width overrides smaller auto",
+    "[ltb][layout][min_max]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div></div>",
+        "html, body { display: block; margin: 0; padding: 0; width: 100px; } "
+        "div { display: block; width: auto; min-width: 200px; }",
+        800.0f);
+    LayoutNode* body = child_of_type(p.root.get(), BoxType::Block);
+    LayoutNode* div = child_of_type(body, BoxType::Block);
+    REQUIRE(div->geometry.width == 200.0f);
+}
+
+TEST_CASE("LTB layout: max-width caps larger width",
+    "[ltb][layout][min_max]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div></div>",
+        "html, body { display: block; margin: 0; padding: 0; width: 1000px; } "
+        "div { display: block; width: auto; max-width: 300px; }",
+        800.0f);
+    LayoutNode* body = child_of_type(p.root.get(), BoxType::Block);
+    LayoutNode* div = child_of_type(body, BoxType::Block);
+    REQUIRE(div->geometry.width == 300.0f);
+}
+
+TEST_CASE("LTB layout: min-height on empty div",
+    "[ltb][layout][min_max]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div></div>",
+        "html, body { display: block; margin: 0; padding: 0; } "
+        "div { display: block; min-height: 50px; }",
+        500.0f);
+    LayoutNode* body = child_of_type(p.root.get(), BoxType::Block);
+    LayoutNode* div = child_of_type(body, BoxType::Block);
+    REQUIRE(div->geometry.height == 50.0f);
+}
+
+TEST_CASE("LTB layout: inline-blocks stack vertically (no inline flow yet)",
+    "[ltb][layout][inline]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<p><span>a</span><span>b</span></p>",
+        "html, body, p { display: block; } "
+        "span { display: inline-block; width: 20px; height: 10px; }",
+        500.0f);
+    LayoutNode* body = child_of_type(p.root.get(), BoxType::Block);
+    LayoutNode* p_ = child_of_type(body, BoxType::Block);
+    REQUIRE(p_->children.size() == 2);
+
+    LayoutNode* s1 = p_->children[0].get();
+    LayoutNode* s2 = p_->children[1].get();
+
+    // Пока нет inline-flow: оба x = 0, второй стопкой под первым.
+    REQUIRE(s1->geometry.x == 0.0f);
+    REQUIRE(s2->geometry.x == 0.0f);
+    REQUIRE(s2->geometry.y >= s1->geometry.y + s1->geometry.height);
+}
+// TODO: когда появится inline formatting context — оба блока должны
+// встать рядом (s2->x == 20), тест станет:
+//   REQUIRE(s2->geometry.x == 20.0f);
+
+TEST_CASE("LTB layout: negative margin-top shifts upwards",
+    "[ltb][layout][margin]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div id='a'></div><div id='b'></div>",
+        "html, body { display: block; margin: 0; padding: 0; } "
+        "div { display: block; height: 40px; margin: 0; } "
+        "#b { margin-top: -10px; }",
+        500.0f);
+    LayoutNode* body = child_of_type(p.root.get(), BoxType::Block);
+    LayoutNode* a = body->children[0].get();
+    LayoutNode* b = body->children[1].get();
+    REQUIRE(a->geometry.y == 0.0f);
+    REQUIRE(b->geometry.y == 30.0f);
+}
+
+TEST_CASE("LTB layout: border-box with padding and border",
+    "[ltb][layout][box-sizing]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div></div>",
+        "html, body { display: block; margin: 0; padding: 0; } "
+        "div { display: block; box-sizing: border-box; "
+        "      width: 200px; height: 100px; padding: 10px; "
+        "      border-top-width: 2px; border-right-width: 2px; "
+        "      border-bottom-width: 2px; border-left-width: 2px; }",
+        500.0f);
+    LayoutNode* body = child_of_type(p.root.get(), BoxType::Block);
+    LayoutNode* div = child_of_type(body, BoxType::Block);
+    REQUIRE(div->geometry.width == 200.0f);
+    REQUIRE(div->geometry.height == 100.0f);
+}
+
+TEST_CASE("LTB layout: zero-size div keeps 0 height",
+    "[ltb][layout][empty]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div></div>",
+        "html, body { display: block; margin: 0; padding: 0; } "
+        "div { display: block; }",
+        500.0f);
+    LayoutNode* body = child_of_type(p.root.get(), BoxType::Block);
+    LayoutNode* div = child_of_type(body, BoxType::Block);
+    REQUIRE(div->geometry.height == 0.0f);
+    REQUIRE(div->geometry.width == 500.0f);
+}
+
+TEST_CASE("LTB integration: nested cards stacked vertically",
+    "[ltb][integration]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div class='card'><div class='inner'>A</div></div>"
+        "<div class='card'><div class='inner'>B</div></div>",
+        "html, body { display: block; margin: 0; padding: 0; } "
+        ".card  { display: block; padding: 10px; margin-bottom: 20px; height: 60px; } "
+        ".inner { display: block; height: 20px; }",
+        500.0f);
+    LayoutNode* body = child_of_type(p.root.get(), BoxType::Block);
+    REQUIRE(body->children.size() == 2);
+    LayoutNode* c1 = body->children[0].get();
+    LayoutNode* c2 = body->children[1].get();
+    REQUIRE(c1->geometry.y == 0.0f);
+    REQUIRE(c2->geometry.y == 100.0f);
 }

@@ -93,7 +93,8 @@ namespace {
     inline void set_class(DOMNode* n, const std::string& c) { n->attributes["class"] = c; }
     inline void set_id(DOMNode* n, const std::string& i) { n->attributes["id"] = i; }
     inline void set_attr(DOMNode* n, const std::string& k, const std::string& v) {
-        n->attributes[k] = v;
+        n->attributes[std::pmr::string(k.data(), k.size())]
+            .assign(v.data(), v.size());
     }
 
 } // namespace
@@ -944,4 +945,179 @@ TEST_CASE("specificity: :not(:where(#x)) is zero",
     // :where даёт 0, значит :not(0) = 0.
     // Текущая реализация вложенного :where -> 0, arg_list -> 0.
     REQUIRE(s.a == 0); REQUIRE(s.b == 0); REQUIRE(s.c == 0);
+}
+
+
+// ============================================================
+//  ДОПОЛНЕНИЯ: глубокие комбинаторы, специфичность, edge-cases.
+// ============================================================
+
+TEST_CASE("match: descendant across many levels",
+    "[selector][comb][deep]") {
+    Tree t;
+    auto* a = t.E("a");
+    auto* b = t.E("b", a);
+    auto* c = t.E("c", b);
+    auto* d = t.E("d", c);
+    REQUIRE(SM::match_complex(d,
+        chain(cmp(tg("a")), Comb::Descendant, cmp(tg("d")))));
+    REQUIRE_FALSE(SM::match_complex(d,
+        chain(cmp(tg("a")), Comb::Child, cmp(tg("d")))));
+
+    CS big;
+    big.compounds.push_back(cmp(tg("a")));
+    { Cmp x = cmp(tg("b")); x.combinator = Comb::Child; big.compounds.push_back(x); }
+    { Cmp x = cmp(tg("c")); x.combinator = Comb::Child; big.compounds.push_back(x); }
+    { Cmp x = cmp(tg("d")); x.combinator = Comb::Child; big.compounds.push_back(x); }
+    REQUIRE(SM::match_complex(d, big));
+}
+
+TEST_CASE("match: sibling chain a + b + c",
+    "[selector][comb][sibling]") {
+    Tree t;
+    auto* p = t.E("div");
+    auto* a = t.E("a", p);
+    auto* b = t.E("b", p);
+    auto* c = t.E("c", p);
+    (void)a;
+    CS cs;
+    cs.compounds.push_back(cmp(tg("a")));
+    { Cmp x = cmp(tg("b")); x.combinator = Comb::AdjacentSibling; cs.compounds.push_back(x); }
+    { Cmp x = cmp(tg("c")); x.combinator = Comb::AdjacentSibling; cs.compounds.push_back(x); }
+    REQUIRE(SM::match_complex(c, cs));
+}
+
+TEST_CASE("match: general sibling with multiple candidates",
+    "[selector][comb][sibling]") {
+    Tree t;
+    auto* p = t.E("div");
+    auto* h1 = t.E("h1", p);
+    auto* x1 = t.E("p", p);
+    auto* x2 = t.E("p", p);
+    auto* s = t.E("span", p);
+    (void)h1; (void)x1; (void)x2;
+    REQUIRE(SM::match_complex(s,
+        chain(cmp(tg("h1")), Comb::GeneralSibling, cmp(tg("span")))));
+    REQUIRE_FALSE(SM::match_complex(h1,
+        chain(cmp(tg("p")), Comb::GeneralSibling, cmp(tg("h1")))));
+}
+
+TEST_CASE("match: compound with multiple classes",
+    "[selector][simple][class]") {
+    Tree t;
+    auto* n = t.E("div"); set_class(n, "a b c");
+    Cmp c;
+    c.parts.push_back(cl("a"));
+    c.parts.push_back(cl("b"));
+    c.parts.push_back(cl("c"));
+    REQUIRE(SM::match_complex(n, one(std::move(c))));
+
+    Tree t2;
+    auto* n2 = t2.E("div"); set_class(n2, "a b");
+    Cmp c2;
+    c2.parts.push_back(cl("a"));
+    c2.parts.push_back(cl("c"));    // нет c
+    REQUIRE_FALSE(SM::match_complex(n2, one(std::move(c2))));
+}
+
+TEST_CASE("match: :not(div) on span matches",
+    "[selector][pseudo][not]") {
+    Tree t; auto* sp = t.E("span");
+    REQUIRE(SM::match_complex(sp, one(pc("not", "div"))));
+}
+
+TEST_CASE("match: :not(.a.b.c) compound negation",
+    "[selector][pseudo][not]") {
+    Tree t;  auto* a = t.E("div"); set_class(a, "a b");
+    Tree t2; auto* b = t2.E("div"); set_class(b, "a b c");
+    REQUIRE(SM::match_complex(a, one(pc("not", ".a.b.c"))));
+    REQUIRE_FALSE(SM::match_complex(b, one(pc("not", ".a.b.c"))));
+}
+
+TEST_CASE("match: :nth-last-child from tail",
+    "[selector][pseudo][nth]") {
+    SeqTree s;
+    auto cs = one(pc("nth-last-child", "1"));
+    REQUIRE(SM::match_complex(s.s2, cs));
+    auto cs5 = one(pc("nth-last-child", "5"));
+    REQUIRE(SM::match_complex(s.p1, cs5));
+}
+
+TEST_CASE("match: compound of two pseudo-classes",
+    "[selector][pseudo][compound]") {
+    Tree t;
+    auto* div = t.E("div");
+    auto* p = t.E("p", div);
+    (void)div;
+    Cmp c;
+    c.parts.push_back(tg("p"));
+    c.parts.push_back(pc("first-child"));
+    c.parts.push_back(pc("last-child"));
+    REQUIRE(SM::match_complex(p, one(std::move(c))));
+}
+
+TEST_CASE("specificity: :nth-child counts as (0,1,0)",
+    "[selector][spec]") {
+    auto s = SM::compute_specificity(one(pc("nth-child", "2")));
+    REQUIRE(s.a == 0); REQUIRE(s.b == 1); REQUIRE(s.c == 0);
+}
+
+TEST_CASE("specificity: chain a > b c.d#e = (1,1,3)",
+    "[selector][spec]") {
+    CS cs;
+    cs.compounds.push_back(cmp(tg("a")));
+    { Cmp x = cmp(tg("b")); x.combinator = Comb::Child; cs.compounds.push_back(x); }
+    {
+        Cmp x = cmp(tg("c"), cl("d"), id_("e"));
+        x.combinator = Comb::Descendant;
+        cs.compounds.push_back(x);
+    }
+    auto s = SM::compute_specificity(cs);
+    REQUIRE(s.a == 1); REQUIRE(s.b == 1); REQUIRE(s.c == 3);
+}
+
+TEST_CASE("match: chain of four adjacent siblings",
+    "[selector][comb][sibling]") {
+    Tree t;
+    auto* p = t.E("div");
+    auto* a = t.E("a", p);
+    auto* b = t.E("b", p);
+    auto* c = t.E("c", p);
+    auto* d = t.E("d", p);
+    (void)a; (void)b;
+    CS cs;
+    cs.compounds.push_back(cmp(tg("a")));
+    { Cmp x = cmp(tg("b")); x.combinator = Comb::AdjacentSibling; cs.compounds.push_back(x); }
+    { Cmp x = cmp(tg("c")); x.combinator = Comb::AdjacentSibling; cs.compounds.push_back(x); }
+    { Cmp x = cmp(tg("d")); x.combinator = Comb::AdjacentSibling; cs.compounds.push_back(x); }
+    REQUIRE(SM::match_complex(d, cs));
+}
+
+TEST_CASE("match: null parent for :root",
+    "[selector][pseudo][root]") {
+    Tree t; auto* div = t.E("div");
+    REQUIRE(SM::match_complex(div, one(pc("root"))));
+}
+
+TEST_CASE("integration: navigation menu selectors",
+    "[selector][integration]") {
+    Tree t;
+    auto* nav = t.E("nav"); set_class(nav, "menu");
+    auto* ul = t.E("ul", nav);
+    auto* li1 = t.E("li", ul); set_class(li1, "item");
+    auto* li2 = t.E("li", ul); set_class(li2, "item active");
+    auto* a = t.E("a", li1); set_attr(a, "href", "#");
+
+    REQUIRE(SM::match_complex(a,
+        chain(cmp(cl("menu")), Comb::Descendant, cmp(tg("a")))));
+
+    CS cs;
+    cs.compounds.push_back(cmp(cl("menu")));
+    { Cmp x = cmp(tg("ul")); x.combinator = Comb::Child; cs.compounds.push_back(x); }
+    { Cmp x = cmp(tg("li")); x.combinator = Comb::Child; cs.compounds.push_back(x); }
+    REQUIRE(SM::match_complex(li1, cs));
+    REQUIRE(SM::match_complex(li2, cs));
+
+    REQUIRE(SM::match_complex(li2, one(cmp(tg("li"), cl("active")))));
+    REQUIRE_FALSE(SM::match_complex(li1, one(cmp(tg("li"), cl("active")))));
 }

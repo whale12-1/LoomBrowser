@@ -1,0 +1,67 @@
+name: Tests
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  unit-tests:
+    # 24.04 — тут Catch2 v3 в apt. На 22.04 пакет старый (v2), не подойдёт.
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          # Если QuickJS не submodule, а просто папка — строку выше можно убрать.
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake ninja-build clang \
+            qt6-base-dev qt6-websockets-dev libgl1-mesa-dev \
+            libfreetype-dev libssl-dev \
+            catch2
+
+      - name: Verify Catch2 version
+        run: |
+          # На всякий случай — убеждаемся, что в системе есть Catch2 v3.
+          dpkg -l | grep -i catch2 || true
+          ls /usr/lib/cmake/ | grep -i catch || true
+
+      - name: Configure CMake
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DBUILD_TESTING=ON \
+            -G Ninja
+
+      - name: Build
+        run: cmake --build build
+
+      - name: List built tests
+        run: |
+          # Показывает, какие бинарники реально собрались.
+          find build -name "*_tests" -type f -executable | sort
+
+      - name: Run tests
+        working-directory: build
+        run: ctest --output-on-failure --parallel 4
+
+      - name: Upload test logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs
+          path: |
+            build/Testing/
+            build/**/*.log
+          if-no-files-found: ignore
+          retention-days: 7
