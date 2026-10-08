@@ -524,20 +524,20 @@ private:
     static void finalize(uint32_t /*idx*/, StyleStorageSoA& /*s*/) {}
 
     // ---------- parsers ----------
-    static Display parse_display(const std::string& v) {
-        if (v == "none")         return Display::None;
-        if (v == "block")        return Display::Block;
-        if (v == "inline")       return Display::Inline;
-        if (v == "inline-block") return Display::InlineBlock;
-        if (v == "flex")         return Display::Flex;
-        if (v == "inline-flex")  return Display::InlineFlex;
-        if (v == "grid")         return Display::Grid;
-        if (v == "inline-grid")  return Display::InlineGrid;
-        if (v == "table")        return Display::Table;
-        if (v == "table-row")    return Display::TableRow;
-        if (v == "table-cell")   return Display::TableCell;
-        if (v == "contents")     return Display::Contents;
-        return Display::Inline;
+    static style::Display parse_display(const std::string& v) {
+        if (v == "none")         return style::Display::None;
+        if (v == "block")        return style::Display::Block;
+        if (v == "inline")       return style::Display::Inline;
+        if (v == "inline-block") return style::Display::InlineBlock;
+        if (v == "flex")         return style::Display::Flex;
+        if (v == "inline-flex")  return style::Display::InlineFlex;
+        if (v == "grid")         return style::Display::Grid;
+        if (v == "inline-grid")  return style::Display::InlineGrid;
+        if (v == "table")        return style::Display::Table;
+        if (v == "table-row")    return style::Display::TableRow;
+        if (v == "table-cell")   return style::Display::TableCell;
+        if (v == "contents")     return style::Display::Contents;
+        return style::Display::Inline;
     }
     static Position parse_position(const std::string& v) {
         if (v == "relative") return Position::Relative;

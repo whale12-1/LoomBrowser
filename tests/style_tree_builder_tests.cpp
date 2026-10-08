@@ -98,7 +98,7 @@ TEST_CASE("STB: display block applied", "[stb][value]") {
     StyleSheet s;
     s.rules.push_back(rtag("div", { decl_("display", "block") }));
     auto soa = StyleTreeBuilder::build(h.html, s);
-    REQUIRE(soa.displays[2] == Display::Block);
+    REQUIRE(soa.displays[2] == style::Display::Block);
 }
 
 TEST_CASE("STB: display none applied", "[stb][value]") {
@@ -106,7 +106,7 @@ TEST_CASE("STB: display none applied", "[stb][value]") {
     StyleSheet s;
     s.rules.push_back(rtag("div", { decl_("display", "none") }));
     auto soa = StyleTreeBuilder::build(h.html, s);
-    REQUIRE(soa.displays[2] == Display::None);
+    REQUIRE(soa.displays[2] == style::Display::None);
 }
 
 TEST_CASE("STB: display flex", "[stb][value]") {
@@ -114,7 +114,7 @@ TEST_CASE("STB: display flex", "[stb][value]") {
     StyleSheet s;
     s.rules.push_back(rtag("div", { decl_("display", "flex") }));
     auto soa = StyleTreeBuilder::build(h.html, s);
-    REQUIRE(soa.displays[2] == Display::Flex);
+    REQUIRE(soa.displays[2] == style::Display::Flex);
 }
 
 TEST_CASE("STB: display invalid falls back to Inline",
@@ -123,7 +123,7 @@ TEST_CASE("STB: display invalid falls back to Inline",
     StyleSheet s;
     s.rules.push_back(rtag("div", { decl_("display", "garbage") }));
     auto soa = StyleTreeBuilder::build(h.html, s);
-    REQUIRE(soa.displays[2] == Display::Inline);
+    REQUIRE(soa.displays[2] == style::Display::Inline);
 }
 
 TEST_CASE("STB: position absolute", "[stb][value]") {
@@ -682,7 +682,7 @@ TEST_CASE("STB integration: card example", "[stb][integration]") {
     auto soa = StyleTreeBuilder::build(html, s);
 
     // html = 0, body = 1, card = 2, h1 = 3
-    REQUIRE(soa.displays[2] == Display::Block);
+    REQUIRE(soa.displays[2] == style::Display::Block);
     REQUIRE(soa.widths[2].value == 640.0f);
     REQUIRE(soa.background_colors[2] == 0xFFFFFFFFu);
     REQUIRE(soa.margin_top[2].value == 24.0f);

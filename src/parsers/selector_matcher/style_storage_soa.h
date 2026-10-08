@@ -7,7 +7,7 @@
 
 constexpr uint32_t INVALID_INDEX = UINT32_MAX;
 
-using style::Display;  using style::Position;  using style::Float;
+using style::Position;  using style::Float;
 using style::Overflow; using style::Visibility; using style::BoxSizing;
 using style::TextAlign; using style::FontStyle; using style::WhiteSpace;
 using style::FlexDir;  using style::Justify;    using style::AlignItems;
@@ -31,7 +31,7 @@ struct StyleStorageSoA {
     // =========================================================
     // 2. Вычисленные стили
     // =========================================================
-    std::vector<Display>    displays;
+    std::vector<style::Display>    displays;
     std::vector<Position>   positions;
     std::vector<Float>      floats;
     std::vector<Overflow>   overflows;
@@ -86,7 +86,7 @@ struct StyleStorageSoA {
         next_sibling_indices.push_back(INVALID_INDEX);
         dom_nodes.push_back(node);
 
-        displays.push_back(Display::Inline);
+        displays.push_back(style::Display::Inline);
         positions.push_back(Position::Static);
         floats.push_back(Float::None);
         overflows.push_back(Overflow::Visible);

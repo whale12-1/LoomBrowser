@@ -86,7 +86,7 @@ private:
         const StyleStorageSoA& storage,
         const std::unordered_map<const DOMNode*, uint32_t>& dom_to_soa)
     {
-        if (storage.displays[soa_idx] == Display::None) return nullptr;
+        if (storage.displays[soa_idx] == style::Display::None) return nullptr;
 
         const DOMNode* dom = storage.dom_nodes[soa_idx];
         if (!dom) return nullptr;
@@ -136,24 +136,24 @@ private:
             tag == "base" || tag == "noscript" || tag == "template";
     }
 
-    static BoxType classify_box(Display d) {
+    static BoxType classify_box(style::Display d) {
         switch (d) {
-        case Display::Block:
-        case Display::Flex:
-        case Display::Grid:
-        case Display::Table:
-        case Display::TableRow:
-        case Display::TableCell:
+        case style::Display::Block:
+        case style::Display::Flex:
+        case style::Display::Grid:
+        case style::Display::Table:
+        case style::Display::TableRow:
+        case style::Display::TableCell:
             return BoxType::Block;
 
-        case Display::Inline:
-        case Display::InlineBlock:
-        case Display::InlineFlex:
-        case Display::InlineGrid:
-        case Display::Contents:
+        case style::Display::Inline:
+        case style::Display::InlineBlock:
+        case style::Display::InlineFlex:
+        case style::Display::InlineGrid:
+        case style::Display::Contents:
             return BoxType::Inline;
 
-        case Display::None:
+        case style::Display::None:
             break;
         }
         return BoxType::Block;
