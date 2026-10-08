@@ -1,4 +1,4 @@
-#include "./headers/BrowserToolbar.h"
+#include "./headers/BrowserToolBar.h"
 
 #include <QHBoxLayout>
 
