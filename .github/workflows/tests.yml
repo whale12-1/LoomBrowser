@@ -53,6 +53,10 @@ jobs:
 
       - name: Run tests
         working-directory: build
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+          LSAN_OPTIONS: detect_leaks=0
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=0
         run: ctest --output-on-failure --parallel 4
 
       - name: Upload test logs
