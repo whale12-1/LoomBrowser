@@ -40,7 +40,16 @@ jobs:
       - name: Run Fuzzer
         run: |
           cd build-fuzz
-          ./fuzz_html ../corpus/html/ -max_total_time=300 -artifact_prefix=./
+          # Ищем бинарник независимо от того, куда его положил CMake:
+          # fuzz_html, fuzz/fuzz_html, bin/fuzz_html и т.п.
+          FUZZER=$(find . -name fuzz_html -type f -executable | head -n1)
+          if [ -z "$FUZZER" ]; then
+            echo "ERROR: fuzz_html binary not found"
+            find . -type f -executable | sort
+            exit 1
+          fi
+          echo "Running: $FUZZER"
+          "$FUZZER" ../corpus/html/ -max_total_time=300 -artifact_prefix=./fuzz/
         continue-on-error: true
 
       - name: Upload crash artifacts
@@ -48,7 +57,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: fuzzing-crashes
-          path: build-fuzz/crash-*
+          path: |
+            build-fuzz/crash-*
+            build-fuzz/fuzz/crash-*
           if-no-files-found: ignore
           retention-days: 7
 
