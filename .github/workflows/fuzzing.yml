@@ -1,78 +1,50 @@
-# .github/workflows/fuzzing.yml
-
-# Имя workflow, которое будет отображаться на вкладке Actions
 name: Continuous Fuzzing
 
-# Условия запуска
 on:
-  # Запускать при каждом пуше в ветку main
   push:
     branches: [ "main" ]
-  # Запускать при создании Pull Request в ветку main
   pull_request:
     branches: [ "main" ]
-  # Запускать по расписанию (например, каждую ночь в 00:00 UTC)
   schedule:
     - cron: '0 0 * * *'
-  # Позволяет запускать workflow вручную из вкладки Actions
   workflow_dispatch:
 
-# Определяем задачи (jobs)
 jobs:
-  # Задача для сборки и запуска фаззера
   fuzz:
-    # Запускаем на самой свежей версии Ubuntu, предоставляемой GitHub
     runs-on: ubuntu-latest
-
-    # Даём разрешение на чтение содержимого репозитория
     permissions:
       contents: read
 
-    # Шаги (steps) для выполнения
     steps:
-      # 1. Скачиваем код из репозитория
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2. Устанавливаем необходимые зависимости (CMake, Clang, Ninja)
       - name: Install build dependencies
         run: |
           sudo apt-get update
+          # Р‘РѕР»СЊС€Рµ РЅРёРєР°РєРѕРіРѕ Qt вЂ” С‚РѕР»СЊРєРѕ РєРѕРјРїРёР»СЏС‚РѕСЂ, cmake Рё ninja.
           sudo apt-get install -y cmake ninja-build clang
 
-      # 3. Настраиваем сборку с помощью CMake.
-      #    Используем Clang, так как libFuzzer лучше всего работает с ним.
-      #    Указываем флаг -DFUZZING_BUILD=ON (если у вас есть такая опция в CMake) или просто стандартную сборку.
       - name: Configure CMake
         run: |
           cmake -B build-fuzz \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_C_COMPILER=clang \
             -DCMAKE_CXX_COMPILER=clang++ \
+            -DTOYBROWSER_FUZZING=ON \
             -G Ninja
 
-      # 4. Собираем проект. В данном случае мы собираем только цель fuzz_html.
-      #    Если у вас несколько фаззеров, перечислите их через пробел.
       - name: Build fuzzer
         run: cmake --build build-fuzz --target fuzz_html
 
-      # 5. Запускаем фаззер. Это самый важный шаг.
-      #    -max_total_time=300: фаззер будет работать 300 секунд (5 минут).
-      #    -artifact_prefix=./: сохранять файлы крэшей (crash-*) в текущую директорию.
-      #    ../corpus/html/: путь к папке с корпусом.
       - name: Run Fuzzer
         run: |
           cd build-fuzz
           ./fuzz_html ../corpus/html/ -max_total_time=300 -artifact_prefix=./
-        # Продолжаем выполнение workflow, даже если фаззер найдет крэш (упадёт с ошибкой).
-        # Это нужно, чтобы мы могли загрузить артефакты в следующем шаге.
         continue-on-error: true
 
-      # 6. Загружаем артефакты. Этот шаг выполнится в любом случае.
-      #    Если фаззер нашел крэш, файл crash-* будет загружен.
-      #    Если крэшей нет, шаг просто ничего не сделает (благодаря if-no-files-found: ignore).
       - name: Upload crash artifacts
-        if: always() # Выполнять всегда, даже если предыдущий шаг упал
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: fuzzing-crashes
@@ -80,9 +52,6 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      # 7. (Опционально) Загружаем обновленный корпус.
-      #    Если фаззер нашел новые интересные входные данные, они сохранятся в папке корпуса.
-      #    Это поможет будущим запускам быть эффективнее.
       - name: Upload updated corpus
         if: always()
         uses: actions/upload-artifact@v4
