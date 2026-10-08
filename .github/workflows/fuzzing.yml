@@ -40,8 +40,7 @@ jobs:
       - name: Run Fuzzer
         run: |
           cd build-fuzz
-          # Ищем бинарник независимо от того, куда его положил CMake:
-          # fuzz_html, fuzz/fuzz_html, bin/fuzz_html и т.п.
+
           FUZZER=$(find . -name fuzz_html -type f -executable | head -n1)
           if [ -z "$FUZZER" ]; then
             echo "ERROR: fuzz_html binary not found"
@@ -49,7 +48,23 @@ jobs:
             exit 1
           fi
           echo "Running: $FUZZER"
-          "$FUZZER" ../corpus/html/ -max_total_time=300 -artifact_prefix=./fuzz/
+
+          CORPUS=""
+          for cand in ../fuzz/corpus/html ../corpus/html corpus/html; do
+            if [ -d "$cand" ]; then
+              CORPUS="$cand"
+              break
+            fi
+          done
+
+          if [ -z "$CORPUS" ]; then
+            echo "No corpus directory found; starting from empty corpus."
+            mkdir -p corpus/html
+            CORPUS="corpus/html"
+          fi
+          echo "Using corpus: $CORPUS"
+
+          "$FUZZER" "$CORPUS" -max_total_time=300 -artifact_prefix=./fuzz/
         continue-on-error: true
 
       - name: Upload crash artifacts
