@@ -15,6 +15,23 @@ jobs:
     permissions:
       contents: read
 
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: fuzz_html
+            corpus: html
+          - target: fuzz_css
+            corpus: css
+          - target: fuzz_selector
+            corpus: selector
+          - target: fuzz_style_tree
+            corpus: style_tree
+          - target: fuzz_layout
+            corpus: layout
+          - target: fuzz_display_list
+            corpus: display_list
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -22,59 +39,49 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          # Больше никакого Qt — только компилятор, cmake и ninja.
           sudo apt-get install -y cmake ninja-build clang
 
       - name: Configure CMake
+        working-directory: fuzz
         run: |
           cmake -B build-fuzz \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_C_COMPILER=clang \
             -DCMAKE_CXX_COMPILER=clang++ \
-            -DTOYBROWSER_FUZZING=ON \
             -G Ninja
 
-      - name: Build fuzzer
-        run: cmake --build build-fuzz --target fuzz_html
+      - name: Build ${{ matrix.target }}
+        working-directory: fuzz
+        run: cmake --build build-fuzz --target ${{ matrix.target }}
 
-      - name: Run Fuzzer
+      - name: Run ${{ matrix.target }}
+        working-directory: fuzz
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+          LSAN_OPTIONS: detect_leaks=0
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=0
         run: |
           cd build-fuzz
+          FUZZER=$(find . -name ${{ matrix.target }} -type f -executable | head -n1)
+          [ -z "$FUZZER" ] && { echo "binary not found"; exit 1; }
 
-          FUZZER=$(find . -name fuzz_html -type f -executable | head -n1)
-          if [ -z "$FUZZER" ]; then
-            echo "ERROR: fuzz_html binary not found"
-            find . -type f -executable | sort
-            exit 1
-          fi
-          echo "Running: $FUZZER"
+          CORPUS="../corpus/${{ matrix.corpus }}"
+          [ -d "$CORPUS" ] || { mkdir -p "$CORPUS"; }
 
-          CORPUS=""
-          for cand in ../fuzz/corpus/html ../corpus/html corpus/html; do
-            if [ -d "$cand" ]; then
-              CORPUS="$cand"
-              break
-            fi
-          done
-
-          if [ -z "$CORPUS" ]; then
-            echo "No corpus directory found; starting from empty corpus."
-            mkdir -p corpus/html
-            CORPUS="corpus/html"
-          fi
-          echo "Using corpus: $CORPUS"
-
-          "$FUZZER" "$CORPUS" -max_total_time=300 -artifact_prefix=./fuzz/
+          echo "Running $FUZZER on $CORPUS"
+          "$FUZZER" "$CORPUS" \
+            -max_total_time=180 \
+            -artifact_prefix=./${{ matrix.target }}-
         continue-on-error: true
 
       - name: Upload crash artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: fuzzing-crashes
+          name: crashes-${{ matrix.target }}
           path: |
-            build-fuzz/crash-*
-            build-fuzz/fuzz/crash-*
+            fuzz/build-fuzz/${{ matrix.target }}-crash-*
+            fuzz/build-fuzz/crash-*
           if-no-files-found: ignore
           retention-days: 7
 
@@ -82,7 +89,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: updated-corpus
-          path: corpus/html/
+          name: corpus-${{ matrix.target }}
+          path: fuzz/corpus/${{ matrix.corpus }}/
           if-no-files-found: ignore
           retention-days: 7

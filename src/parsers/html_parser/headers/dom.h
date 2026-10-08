@@ -1,4 +1,4 @@
-#pragma once
+п»ї#pragma once
 #include <string>
 #include <iostream>
 #include <memory_resource>
@@ -7,17 +7,17 @@
 
 enum class NodeType { Document, Element, Text, Comment, Doctype };
 
-// Thread-local текущий PMR-ресурс. Устанавливается в HTMLParser::parse
-// и CSSParser::parse на время разбора — все pmr-контейнеры внутри
-// созданных узлов будут аллоцироваться в арене парсера.
+// Thread-local С‚РµРєСѓС‰РёР№ PMR-СЂРµСЃСѓСЂСЃ. РЈСЃС‚Р°РЅР°РІР»РёРІР°РµС‚СЃСЏ РІ HTMLParser::parse
+// Рё CSSParser::parse РЅР° РІСЂРµРјСЏ СЂР°Р·Р±РѕСЂР° вЂ” РІСЃРµ pmr-РєРѕРЅС‚РµР№РЅРµСЂС‹ РІРЅСѓС‚СЂРё
+// СЃРѕР·РґР°РЅРЅС‹С… СѓР·Р»РѕРІ Р±СѓРґСѓС‚ Р°Р»Р»РѕС†РёСЂРѕРІР°С‚СЊСЃСЏ РІ Р°СЂРµРЅРµ РїР°СЂСЃРµСЂР°.
 inline ArenaMemoryResource*& current_arena_resource() {
     static thread_local ArenaMemoryResource* r = nullptr;
     return r;
 }
 
-// Хелпер: возвращает ресурс для новых контейнеров.
-// Если current_arena_resource не установлен (например, в тестах),
-// падаем на дефолтный — обычный new/delete.
+// РҐРµР»РїРµСЂ: РІРѕР·РІСЂР°С‰Р°РµС‚ СЂРµСЃСѓСЂСЃ РґР»СЏ РЅРѕРІС‹С… РєРѕРЅС‚РµР№РЅРµСЂРѕРІ.
+// Р•СЃР»Рё current_arena_resource РЅРµ СѓСЃС‚Р°РЅРѕРІР»РµРЅ (РЅР°РїСЂРёРјРµСЂ, РІ С‚РµСЃС‚Р°С…),
+// РїР°РґР°РµРј РЅР° РґРµС„РѕР»С‚РЅС‹Р№ вЂ” РѕР±С‹С‡РЅС‹Р№ new/delete.
 inline std::pmr::memory_resource* pmr() {
     auto* r = current_arena_resource();
     return r ? static_cast<std::pmr::memory_resource*>(r)
@@ -29,7 +29,7 @@ struct DOMNode {
     std::pmr::string tag_name;
     std::pmr::string text_content;
 
-    // Ключи и значения тоже pmr — иначе каждая пара (attr,value) утечёт
+    // РљР»СЋС‡Рё Рё Р·РЅР°С‡РµРЅРёСЏ С‚РѕР¶Рµ pmr вЂ” РёРЅР°С‡Рµ РєР°Р¶РґР°СЏ РїР°СЂР° (attr,value) СѓС‚РµС‡С‘С‚
     std::pmr::unordered_map<std::pmr::string, std::pmr::string> attributes;
 
     DOMNode* parent = nullptr;
@@ -49,7 +49,7 @@ struct DOMNode {
         children.push_back(child);
     }
 };
-// Рекурсивный вывод DOM-дерева в консоль для отладки
+// Р РµРєСѓСЂСЃРёРІРЅС‹Р№ РІС‹РІРѕРґ DOM-РґРµСЂРµРІР° РІ РєРѕРЅСЃРѕР»СЊ РґР»СЏ РѕС‚Р»Р°РґРєРё
 inline void print_dom(const DOMNode* node, int depth = 0) {
     if (!node) return;
     std::string indent(depth * 2, ' ');
