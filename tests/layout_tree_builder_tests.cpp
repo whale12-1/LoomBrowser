@@ -81,6 +81,21 @@ namespace {
         return nullptr;
     }
 
+    // Первый НЕпробельный Text-потомок — рекурсивно через AnonymousBlock.
+    // Нужно потому, что теперь текст обёрнут в AnonymousBlock и лежит
+    // на один уровень глубже, чем раньше.
+    inline LayoutNode* first_text_deep(const LayoutNode* node) {
+        if (!node) return nullptr;
+        for (const auto& c : node->children) {
+            if (c->type == BoxType::Text && c->text_content != " ")
+                return c.get();
+            if (c->type == BoxType::AnonymousBlock) {
+                if (auto* t = first_text_deep(c.get())) return t;
+            }
+        }
+        return nullptr;
+    }
+
 } // namespace
 
 
@@ -111,7 +126,11 @@ TEST_CASE("LTB build: display:inline → BoxType::Inline",
     LayoutNode* body = child_of_type(p.root.get(), BoxType::Block);
     REQUIRE(body != nullptr);                                   // <body>
 
-    LayoutNode* sp = child_of_type(body, BoxType::Inline);
+    // <span> обёрнут в AnonymousBlock (inline formatting context).
+    LayoutNode* anon = child_of_type(body, BoxType::AnonymousBlock);
+    REQUIRE(anon != nullptr);
+
+    LayoutNode* sp = child_of_type(anon, BoxType::Inline);
     REQUIRE(sp != nullptr);                                     // <span>
     REQUIRE(sp->type == BoxType::Inline);
 }
@@ -126,7 +145,10 @@ TEST_CASE("LTB build: display:inline-block → BoxType::Inline",
     LayoutNode* body = child_of_type(p.root.get(), BoxType::Block);
     REQUIRE(body != nullptr);
 
-    LayoutNode* btn = child_of_type(body, BoxType::Inline);
+    LayoutNode* anon = child_of_type(body, BoxType::AnonymousBlock);
+    REQUIRE(anon != nullptr);
+
+    LayoutNode* btn = child_of_type(anon, BoxType::Inline);
     REQUIRE(btn != nullptr);
     REQUIRE(btn->type == BoxType::Inline);
 }
@@ -174,7 +196,7 @@ TEST_CASE("LTB build: mixed inline/block triggers anonymous wrapping",
     LayoutNode* div = child_of_type(body, BoxType::Block);
     REQUIRE(div != nullptr);
 
-    // Ожидаем: [AnonBlock[Text, Inline[Text]], Block[Text], AnonBlock[Text]]
+    // Ожидаем: [AnonBlock[Text, Inline[AnonBlock[Text]]], Block[...], AnonBlock[Text]]
     REQUIRE(div->children.size() == 3);
     REQUIRE(div->children[0]->type == BoxType::AnonymousBlock);
     REQUIRE(div->children[0]->children.size() == 2);
@@ -188,7 +210,7 @@ TEST_CASE("LTB build: mixed inline/block triggers anonymous wrapping",
     REQUIRE(div->children[2]->children[0]->type == BoxType::Text);
 }
 
-TEST_CASE("LTB build: all-inline children — no anonymous block",
+TEST_CASE("LTB build: all-inline children wrapped in a single anonymous block",
     "[ltb][build][anon]") {
     ArenaAllocator arena;
     auto p = run_pipeline(arena,
@@ -198,9 +220,17 @@ TEST_CASE("LTB build: all-inline children — no anonymous block",
 
     LayoutNode* body = child_of_type(p.root.get(), BoxType::Block);
     LayoutNode* div = child_of_type(body, BoxType::Block);
-    REQUIRE(div->children.size() == 3);
-    for (auto& c : div->children)
-        REQUIRE(c->type != BoxType::AnonymousBlock);
+
+    // Все inline-дети обёрнуты в один AnonymousBlock.
+    REQUIRE(div->children.size() == 1);
+    REQUIRE(div->children[0]->type == BoxType::AnonymousBlock);
+
+    const auto* anon = div->children[0].get();
+    // Text "a", Inline <span>, Text "c"
+    REQUIRE(anon->children.size() == 3);
+    REQUIRE(anon->children[0]->type == BoxType::Text);
+    REQUIRE(anon->children[1]->type == BoxType::Inline);
+    REQUIRE(anon->children[2]->type == BoxType::Text);
 }
 
 TEST_CASE("LTB build: anonymous block has no style_soa_idx",
@@ -227,8 +257,11 @@ TEST_CASE("LTB build: text node preserves content",
     LayoutNode* body = child_of_type(p.root.get(), BoxType::Block);
     LayoutNode* div = child_of_type(body, BoxType::Block);
     REQUIRE(div->children.size() == 1);
-    REQUIRE(div->children[0]->type == BoxType::Text);
-    REQUIRE(div->children[0]->text_content == "hello");
+    REQUIRE(div->children[0]->type == BoxType::AnonymousBlock);
+
+    LayoutNode* txt = first_text_deep(div->children[0].get());
+    REQUIRE(txt != nullptr);
+    REQUIRE(txt->text_content == "hello");
 }
 
 TEST_CASE("LTB build: whitespace-only text is filtered",
@@ -242,7 +275,7 @@ TEST_CASE("LTB build: whitespace-only text is filtered",
     REQUIRE(div->children.empty());
 }
 
-TEST_CASE("LTB build: text mixed with significant whitespace",
+TEST_CASE("LTB build: text mixed with whitespace — collapsed inside anon block",
     "[ltb][build][text]") {
     ArenaAllocator arena;
     auto p = run_pipeline(arena,
@@ -251,8 +284,15 @@ TEST_CASE("LTB build: text mixed with significant whitespace",
     LayoutNode* body = child_of_type(p.root.get(), BoxType::Block);
     LayoutNode* div = child_of_type(body, BoxType::Block);
     REQUIRE(div->children.size() == 1);
-    // Пробелы сохранены (text_content не тримится)
-    REQUIRE(div->children[0]->text_content == "  hello  ");
+    REQUIRE(div->children[0]->type == BoxType::AnonymousBlock);
+
+    // Ведущие/замыкающие пробелы схлопываются в одиночные:
+    // [Text " "] [Text "hello"] [Text " "]
+    const auto* anon = div->children[0].get();
+    REQUIRE(anon->children.size() == 3);
+    REQUIRE(anon->children[0]->text_content == " ");
+    REQUIRE(anon->children[1]->text_content == "hello");
+    REQUIRE(anon->children[2]->text_content == " ");
 }
 
 TEST_CASE("LTB build: text node has no style_soa_idx",
@@ -263,7 +303,12 @@ TEST_CASE("LTB build: text node has no style_soa_idx",
         "html, body, div { display: block; }");
     LayoutNode* body = child_of_type(p.root.get(), BoxType::Block);
     LayoutNode* div = child_of_type(body, BoxType::Block);
-    REQUIRE(div->children[0]->style_soa_idx == UINT32_MAX);
+    LayoutNode* anon = child_of_type(div, BoxType::AnonymousBlock);
+    REQUIRE(anon != nullptr);
+
+    LayoutNode* txt = first_text_deep(anon);
+    REQUIRE(txt != nullptr);
+    REQUIRE(txt->style_soa_idx == UINT32_MAX);
 }
 
 
@@ -362,10 +407,12 @@ TEST_CASE("LTB layout: inline shrink-to-fit around text",
         "span { display: inline; }");
     LayoutNode* body = child_of_type(p.root.get(), BoxType::Block);
     LayoutNode* p_ = child_of_type(body, BoxType::Block);
-    LayoutNode* sp = child_of_type(p_, BoxType::Inline);
+    LayoutNode* anon = child_of_type(p_, BoxType::AnonymousBlock);
+    REQUIRE(anon != nullptr);
+
+    LayoutNode* sp = child_of_type(anon, BoxType::Inline);
     REQUIRE(sp != nullptr);
     // span не задан явно — shrink-to-fit по содержимому
-    // text "ab" → char_w = 8 (fs=16 * 0.5) → one_line_w = 16
     REQUIRE(sp->geometry.width > 0.0f);
 }
 
@@ -380,9 +427,11 @@ TEST_CASE("LTB layout: single-line text height = line-height",
         500.0f);
     LayoutNode* body = child_of_type(p.root.get(), BoxType::Block);
     LayoutNode* div = child_of_type(body, BoxType::Block);
-    REQUIRE(div->children.size() == 1);
-    LayoutNode* txt = div->children[0].get();
-    REQUIRE(txt->type == BoxType::Text);
+    LayoutNode* anon = child_of_type(div, BoxType::AnonymousBlock);
+    REQUIRE(anon != nullptr);
+
+    LayoutNode* txt = first_text_deep(anon);
+    REQUIRE(txt != nullptr);
     // line-height normal = 16 * 1.2 = 19.2
     REQUIRE(txt->geometry.height == Approx(19.2f).epsilon(0.001));
 }
@@ -390,9 +439,11 @@ TEST_CASE("LTB layout: single-line text height = line-height",
 TEST_CASE("LTB layout: text wrapping when longer than parent",
     "[ltb][layout][text]") {
     ArenaAllocator arena;
-    // "hello world" = 11 символов. fs=16, char_w=8 → one_line=88px.
-    // parent_width=50 → chars_per_line = 6 (floor(50/8))
-    // lines = ceil(11/6) = 2
+    // "hello world" разбивается на: [Text "hello"] [Text " "] [Text "world"]
+    // fs=16, char_w=8.8 → "hello"=44, " "=8.8, "world"=44
+    // avail=50: "hello"(44) помещается, " "(8.8) не влезает → схлопывается,
+    // "world"(44) идёт на новую строку.
+    // Итог: 2 строки.
     auto p = run_pipeline(arena,
         "<div>hello world</div>",
         "html, body { display: block; } "
@@ -400,10 +451,11 @@ TEST_CASE("LTB layout: text wrapping when longer than parent",
         500.0f);
     LayoutNode* body = child_of_type(p.root.get(), BoxType::Block);
     LayoutNode* div = child_of_type(body, BoxType::Block);
-    LayoutNode* txt = div->children[0].get();
-    // height = 2 * 19.2 = 38.4
-    REQUIRE(txt->geometry.height == Approx(57.6f).epsilon(0.01));
-    REQUIRE(txt->geometry.width == 50.0f);
+    LayoutNode* anon = child_of_type(div, BoxType::AnonymousBlock);
+    REQUIRE(anon != nullptr);
+    // 2 строки × 19.2 = 38.4
+    REQUIRE(anon->geometry.height == Approx(38.4f).epsilon(0.01));
+    REQUIRE(anon->geometry.width == 50.0f);
 }
 
 TEST_CASE("LTB layout: text shorter than parent — no wrap",
@@ -415,7 +467,11 @@ TEST_CASE("LTB layout: text shorter than parent — no wrap",
         500.0f);
     LayoutNode* body = child_of_type(p.root.get(), BoxType::Block);
     LayoutNode* div = child_of_type(body, BoxType::Block);
-    LayoutNode* txt = div->children[0].get();
+    LayoutNode* anon = child_of_type(div, BoxType::AnonymousBlock);
+    REQUIRE(anon != nullptr);
+
+    LayoutNode* txt = first_text_deep(anon);
+    REQUIRE(txt != nullptr);
     // "hi" = 2 симв → one_line_w = 16px, меньше parent 500
     REQUIRE(txt->geometry.width == Catch::Approx(17.6f).epsilon(0.001));
 }
@@ -550,7 +606,7 @@ TEST_CASE("LTB layout: min-height on empty div",
     REQUIRE(div->geometry.height == 50.0f);
 }
 
-TEST_CASE("LTB layout: inline-blocks stack vertically (no inline flow yet)",
+TEST_CASE("LTB layout: two inline-blocks sit side by side",
     "[ltb][layout][inline]") {
     ArenaAllocator arena;
     auto p = run_pipeline(arena,
@@ -560,19 +616,15 @@ TEST_CASE("LTB layout: inline-blocks stack vertically (no inline flow yet)",
         500.0f);
     LayoutNode* body = child_of_type(p.root.get(), BoxType::Block);
     LayoutNode* p_ = child_of_type(body, BoxType::Block);
-    REQUIRE(p_->children.size() == 2);
+    LayoutNode* anon = child_of_type(p_, BoxType::AnonymousBlock);
+    REQUIRE(anon != nullptr);
+    REQUIRE(anon->children.size() == 2);
 
-    LayoutNode* s1 = p_->children[0].get();
-    LayoutNode* s2 = p_->children[1].get();
-
-    // Пока нет inline-flow: оба x = 0, второй стопкой под первым.
+    LayoutNode* s1 = anon->children[0].get();
+    LayoutNode* s2 = anon->children[1].get();
     REQUIRE(s1->geometry.x == 0.0f);
-    REQUIRE(s2->geometry.x == 0.0f);
-    REQUIRE(s2->geometry.y >= s1->geometry.y + s1->geometry.height);
+    REQUIRE(s2->geometry.x == 20.0f);   // теперь рядом
 }
-// TODO: когда появится inline formatting context — оба блока должны
-// встать рядом (s2->x == 20), тест станет:
-//   REQUIRE(s2->geometry.x == 20.0f);
 
 TEST_CASE("LTB layout: negative margin-top shifts upwards",
     "[ltb][layout][margin]") {
