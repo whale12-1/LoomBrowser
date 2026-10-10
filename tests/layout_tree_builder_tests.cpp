@@ -330,7 +330,7 @@ TEST_CASE("LTB layout: two blocks stack vertically",
     REQUIRE(body->geometry.height == 80.0f);
 }
 
-TEST_CASE("LTB layout: margins add between siblings",
+TEST_CASE("LTB layout: adjacent sibling margins collapse",
     "[ltb][layout][stack][margin]") {
     ArenaAllocator arena;
     auto p = run_pipeline(arena,
@@ -343,9 +343,47 @@ TEST_CASE("LTB layout: margins add between siblings",
     LayoutNode* body = child_of_type(p.root.get(), BoxType::Block);
     LayoutNode* d1 = body->children[0].get();
     LayoutNode* d2 = body->children[1].get();
+
     REQUIRE(d1->geometry.y == 0.0f);
-    REQUIRE(d2->geometry.y == 80.0f);   // 50 + 10 + 20
-    REQUIRE(body->geometry.height == 110.0f);  // БЕЗ margin collapsing
+    REQUIRE(d1->geometry.height == 50.0f);
+    // Зазор = max(10, 20) = 20, а не 10 + 20 = 30
+    REQUIRE(d2->geometry.y == 70.0f);
+    REQUIRE(body->geometry.height == 100.0f);  // 50 + 20 + 30
+}
+
+TEST_CASE("LTB layout: opposite-sign margins collapse to sum",
+    "[ltb][layout][margin][collapse]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div id='d1'></div><div id='d2'></div>",
+        "html, body { display: block; margin: 0; padding: 0; } "
+        "div { display: block; height: 40px; } "
+        "#d1 { margin-bottom: -5px; } "
+        "#d2 { margin-top: 10px; }",
+        500.0f);
+    LayoutNode* body = child_of_type(p.root.get(), BoxType::Block);
+    LayoutNode* d1 = body->children[0].get();
+    LayoutNode* d2 = body->children[1].get();
+    REQUIRE(d1->geometry.y == 0.0f);
+    // -5 + 10 = 5 (разные знаки → сумма)
+    REQUIRE(d2->geometry.y == 45.0f);
+    REQUIRE(body->geometry.height == 85.0f);  // 40 + 5 + 40
+}
+
+TEST_CASE("LTB layout: two negative margins collapse to most negative",
+    "[ltb][layout][margin][collapse]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div id='d1'></div><div id='d2'></div>",
+        "html, body { display: block; margin: 0; padding: 0; } "
+        "div { display: block; height: 40px; } "
+        "#d1 { margin-bottom: -5px; } "
+        "#d2 { margin-top: -10px; }",
+        500.0f);
+    LayoutNode* body = child_of_type(p.root.get(), BoxType::Block);
+    LayoutNode* d2 = body->children[1].get();
+    // min(-5, -10) = -10
+    REQUIRE(d2->geometry.y == 30.0f);
 }
 
 TEST_CASE("LTB layout: child margin-left shifts x",

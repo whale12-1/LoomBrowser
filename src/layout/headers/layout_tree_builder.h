@@ -284,6 +284,13 @@ private:
         return 0.0f;
     }
 
+    static float collapse_margins(float a, float b) {
+        if (a >= 0.0f && b >= 0.0f) return std::max(a, b);
+        if (a <= 0.0f && b <= 0.0f) return std::min(a, b);
+        return a + b;
+    }
+
+
     static void resolve_box_model(LayoutNode* node,
         const StyleStorageSoA& storage,
         const Viewport& vp,
@@ -477,7 +484,21 @@ private:
         const float inner_x = g.border_left + g.padding_left;
         const float inner_y = g.border_top + g.padding_top;
 
+        // ------------------------------------------------------------
+        //  Укладка блочных детей с margin collapsing (§ 8.3.1).
+        //
+        //  Между соседними детьми зазор = collapse(prev.margin_bottom, cur.margin_top).
+        //  У первого ребёнка сверху соседа нет — берётся его собственный margin_top.
+        //  После последнего ребёнка остаётся его margin_bottom (учитывается
+        //  в content_height — как это было и раньше).
+        //
+        //  Ограничение: пока НЕ реализовано parent-child collapsing и
+        //  схлопывание через пустые блоки.
+        // ------------------------------------------------------------
         float y_cursor = 0.0f;
+        float prev_bottom = 0.0f;
+        bool  first_child = true;
+
         for (auto& child : node->children) {
             layout_node(child.get(), content_width, vp, storage, root_fs, tm);
 
@@ -486,11 +507,20 @@ private:
             const float cml = child->geometry.margin_left;
             const float ch = child->geometry.height;
 
-            child->geometry.x = inner_x + cml;
-            child->geometry.y = inner_y + y_cursor + cmt;
+            const float gap = first_child
+                ? cmt
+                : collapse_margins(prev_bottom, cmt);
 
-            y_cursor += cmt + ch + cmb;
+            child->geometry.x = inner_x + cml;
+            child->geometry.y = inner_y + y_cursor + gap;
+
+            y_cursor += gap + ch;
+            prev_bottom = cmb;
+            first_child = false;
         }
+
+        // Нижний margin последнего ребёнка всё ещё входит в высоту контейнера.
+        y_cursor += prev_bottom;
 
         // -------- content_height --------
         float content_height = y_cursor;
