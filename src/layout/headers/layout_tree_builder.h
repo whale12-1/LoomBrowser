@@ -70,10 +70,33 @@ public:
         const TextMetrics& metrics = {})
     {
         if (!root) return;
-        const float root_fs = storage.font_sizes.empty()
-            ? 16.0f : storage.font_sizes[0];
+        const float root_fs = storage.font_sizes.empty() ? 16.0f : storage.font_sizes[0];
         layout_node(root, viewport.width, viewport, storage, root_fs, metrics);
+
+        // NEW: пост-проход — сохранить flow-позиции и применить relative
+        apply_position_offsets(root, viewport, storage, root_fs);
     }
+
+    static void apply_position_offsets(LayoutNode* node, const Viewport& vp,
+        const StyleStorageSoA& storage, float root_fs)
+    {
+        if (!node) return;
+
+        // Сохранить flow-позицию (то, что было до relative)
+        node->geometry.flow_x = node->geometry.x;
+        node->geometry.flow_y = node->geometry.y;
+
+        // Применить relative-сдвиг
+        if (node->type == BoxType::Block && node->style_soa_idx != UINT32_MAX
+            && storage.positions[node->style_soa_idx] == style::Position::Relative) {
+            layout_relative(node, vp, storage, root_fs);
+        }
+
+        for (auto& c : node->children) {
+            apply_position_offsets(c.get(), vp, storage, root_fs);
+        }
+    }
+
 
 private:
     // =================================================================
@@ -290,6 +313,38 @@ private:
         return a + b;
     }
 
+    static void layout_relative(LayoutNode* node,
+        const Viewport& vp,
+        const StyleStorageSoA& storage,
+        float root_fs)
+    {
+        const uint32_t si = node->style_soa_idx;
+        if (storage.positions[si] != style::Position::Relative) return;
+
+        const float fs = storage.font_sizes[si];
+        const style::Length& top_inset = storage.top_insets[si];
+        const style::Length& left_inset = storage.left_insets[si];
+        const style::Length& bottom_inset = storage.bottom_insets[si];
+        const style::Length& right_inset = storage.right_insets[si];
+
+        const float top = resolve_px(
+            top_inset, fs, root_fs, vp, node->geometry.width);
+        const float left = resolve_px(
+            left_inset, fs, root_fs, vp, node->geometry.width);
+        const float bottom = resolve_px(
+            bottom_inset, fs, root_fs, vp, node->geometry.height);
+        const float right = resolve_px(
+            right_inset, fs, root_fs, vp, node->geometry.width);
+
+        // If both insets on an axis are specified, this first version uses left/top only.
+        const float offset_x = !left_inset.is_auto() ? left
+            : (!right_inset.is_auto() ? -right : 0.0f);
+        const float offset_y = !top_inset.is_auto() ? top
+            : (!bottom_inset.is_auto() ? -bottom : 0.0f);
+
+        node->geometry.x += offset_x;
+        node->geometry.y += offset_y;
+    }
 
     static void resolve_box_model(LayoutNode* node,
         const StyleStorageSoA& storage,

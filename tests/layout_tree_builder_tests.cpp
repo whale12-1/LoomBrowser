@@ -776,3 +776,90 @@ TEST_CASE("LTB layout: parent bottom margin collapses with last block child",
     REQUIRE(child->geometry.y == 0.0f);
     REQUIRE(next->geometry.y == 35.0f);
 }
+
+TEST_CASE("LTB relative: left shifts x, y unchanged",
+    "[ltb][layout][position][relative]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div id='a'></div>",
+        "#a { display: block; position: relative; left: 10px; "
+        "width: 50px; height: 50px; }");
+    LayoutNode* body = child_of_type(p.root.get(), BoxType::Block);
+    LayoutNode* a = child_of_type(body, BoxType::Block);
+    REQUIRE(a != nullptr);
+    REQUIRE(a->geometry.x == Approx(10.0f).epsilon(0.001));
+    REQUIRE(a->geometry.y == Approx(0.0f).epsilon(0.001));
+}
+
+TEST_CASE("LTB relative: top shifts y",
+    "[ltb][layout][position][relative]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div id='a'></div>",
+        "#a { display: block; position: relative; top: 20px; "
+        "width: 50px; height: 50px; }");
+    LayoutNode* body = child_of_type(p.root.get(), BoxType::Block);
+    LayoutNode* a = child_of_type(body, BoxType::Block);
+    REQUIRE(a != nullptr);
+    REQUIRE(a->geometry.y == Approx(20.0f).epsilon(0.001));
+    REQUIRE(a->geometry.x == Approx(0.0f).epsilon(0.001));
+}
+
+TEST_CASE("LTB relative: negative offset",
+    "[ltb][layout][position][relative]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div id='a'></div>",
+        "#a { display: block; position: relative; left: -5px; "
+        "width: 50px; height: 50px; }");
+    LayoutNode* body = child_of_type(p.root.get(), BoxType::Block);
+    LayoutNode* a = child_of_type(body, BoxType::Block);
+    REQUIRE(a != nullptr);
+    REQUIRE(a->geometry.x == Approx(-5.0f).epsilon(0.001));
+}
+
+TEST_CASE("LTB relative: no inset does nothing",
+    "[ltb][layout][position][relative]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div id='a'></div>",
+        "#a { display: block; position: relative; width: 50px; height: 50px; }");
+    LayoutNode* body = child_of_type(p.root.get(), BoxType::Block);
+    LayoutNode* a = child_of_type(body, BoxType::Block);
+    REQUIRE(a != nullptr);
+    REQUIRE(a->geometry.x == Approx(0.0f).epsilon(0.001));
+    REQUIRE(a->geometry.y == Approx(0.0f).epsilon(0.001));
+}
+
+TEST_CASE("LTB relative: sibling not shifted by previous relative",
+    "[ltb][layout][position][relative]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div id='a'></div><div id='b'></div>",
+        "#a { display: block; position: relative; left: 20px; height: 40px; } "
+        "#b { display: block; height: 40px; }");
+    LayoutNode* body = child_of_type(p.root.get(), BoxType::Block);
+    REQUIRE(body != nullptr);
+    REQUIRE(body->children.size() == 2);
+    LayoutNode* a = body->children[0].get();
+    LayoutNode* b = body->children[1].get();
+    REQUIRE(a->geometry.x == Approx(20.0f).epsilon(0.001));
+    REQUIRE(b->geometry.y == Approx(40.0f).epsilon(0.001));
+    REQUIRE(b->geometry.x == Approx(0.0f).epsilon(0.001));
+}
+
+TEST_CASE("LTB relative: flow_x/flow_y preserved",
+    "[ltb][layout][position][relative]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div id='a'></div>",
+        "#a { display: block; position: relative; left: 10px; top: 5px; }");
+    LayoutNode* body = child_of_type(p.root.get(), BoxType::Block);
+    LayoutNode* a = child_of_type(body, BoxType::Block);
+    REQUIRE(a != nullptr);
+    REQUIRE(a->geometry.x == Approx(10.0f).epsilon(0.001));
+    REQUIRE(a->geometry.y == Approx(5.0f).epsilon(0.001));
+    REQUIRE(a->geometry.flow_x == Approx(0.0f).epsilon(0.001));
+    REQUIRE(a->geometry.flow_y == Approx(0.0f).epsilon(0.001));
+}
+

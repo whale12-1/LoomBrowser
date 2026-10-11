@@ -46,7 +46,7 @@
 3. Тесты на CSS + baseline
 
 ### Группа B: Relative
-**Статус:** ⬜ TODO
+**Статус:** ✅ DONE
 **Зависит от:** A
 **Файлы:** layout_tree_builder.h, tests/layout_tree_builder_tests.cpp
 
