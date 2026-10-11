@@ -72,36 +72,23 @@ public:
     {
         if (!root) return;
         const float root_fs = storage.font_sizes.empty() ? 16.0f : storage.font_sizes[0];
+
+        // 1. Flow-раскладка. Absolute-дети пропускаются, их static position
+        //    сохраняется в layout_block_container.
         layout_node(root, viewport.width, viewport, storage, root_fs, metrics);
 
-        // NEW: пост-проход — сохранить flow-позиции и применить relative
+        // 2. Пост-проход: сохранить flow_x/flow_y для не-absolute узлов,
+        //    применить relative-сдвиг. Absolute-узлы не трогаем — их
+        //    flow-координаты уже сохранены в родителе.
         apply_position_offsets(root, viewport, storage, root_fs);
+
+        // 3. Раскладка absolute-потомков относительно их содержащего блока.
+        layout_absolute_descendants(root, viewport, storage, root_fs, metrics);
     }
-
-    static void apply_position_offsets(LayoutNode* node, const Viewport& vp,
-        const StyleStorageSoA& storage, float root_fs)
-    {
-        if (!node) return;
-
-        // Сохранить flow-позицию (то, что было до relative)
-        node->geometry.flow_x = node->geometry.x;
-        node->geometry.flow_y = node->geometry.y;
-
-        // Применить relative-сдвиг
-        if (node->type == BoxType::Block && node->style_soa_idx != UINT32_MAX
-            && storage.positions[node->style_soa_idx] == style::Position::Relative) {
-            layout_relative(node, vp, storage, root_fs);
-        }
-
-        for (auto& c : node->children) {
-            apply_position_offsets(c.get(), vp, storage, root_fs);
-        }
-    }
-
 
 private:
     // =================================================================
-    //  Phase 1
+    //  Phase 1 — построение
     // =================================================================
 
     static std::unique_ptr<LayoutNode> build_node(
@@ -133,7 +120,7 @@ private:
                 isNonRendered(child_dom->tag_name)) continue;
 
             if (child_dom->type == NodeType::Text) {
-                if (!has_visible_text(child_dom->text_content)) continue; 
+                if (!has_visible_text(child_dom->text_content)) continue;
                 split_text_into_words(child_dom->text_content, node.get());
             }
             else if (child_dom->type == NodeType::Element) {
@@ -256,20 +243,22 @@ private:
         node->children = std::move(out);
     }
 
+    // =================================================================
+    //  Phase 1: индекс containing blocks для absolute
+    //
+    //  Для каждого absolute-узла находим ближайшего предка с position
+    //  relative или absolute и регистрируем узел в его absolute_children.
+    //  Если positioned-предка нет — CB становится root (fallback viewport).
+    // =================================================================
+
     static void build_absolute_index(LayoutNode* root,
         const StyleStorageSoA& storage) {
         if (!root) return;
-        // Рекурсивный обход: для каждого absolute-узла найти CB
-        // и зарегистрировать в cb->absolute_children.
-        collect_absolute(root, root, root, storage);
+        collect_absolute(root, root, storage);
     }
 
-    // Обход дерева с отслеживанием текущего CB.
-    // current_cb — ближайший предок с position relative/absolute,
-    // либо root (fallback viewport).
     static void collect_absolute(LayoutNode* node,
         LayoutNode* current_cb,
-        LayoutNode* root,
         const StyleStorageSoA& storage) {
         if (!node) return;
 
@@ -287,7 +276,7 @@ private:
         }
 
         for (auto& child : node->children) {
-            collect_absolute(child.get(), cb_for_children, root, storage);
+            collect_absolute(child.get(), cb_for_children, storage);
         }
     }
 
@@ -357,6 +346,10 @@ private:
         return a + b;
     }
 
+    // =================================================================
+    //  Relative positioning (пост-обработка flow-координат)
+    // =================================================================
+
     static void layout_relative(LayoutNode* node,
         const Viewport& vp,
         const StyleStorageSoA& storage,
@@ -380,7 +373,7 @@ private:
         const float right = resolve_px(
             right_inset, fs, root_fs, vp, node->geometry.width);
 
-        // If both insets on an axis are specified, this first version uses left/top only.
+        // Если оба inset на оси заданы — первая версия использует left/top.
         const float offset_x = !left_inset.is_auto() ? left
             : (!right_inset.is_auto() ? -right : 0.0f);
         const float offset_y = !top_inset.is_auto() ? top
@@ -389,6 +382,178 @@ private:
         node->geometry.x += offset_x;
         node->geometry.y += offset_y;
     }
+
+    // =================================================================
+    //  Пост-проход: сохранить flow-позицию и применить relative
+    //
+    //  Для absolute-узлов flow_x/flow_y УЖЕ сохранены родителем
+    //  в layout_block_container. Не перезаписываем их здесь —
+    //  их geometry.x/y пока не посчитаны.
+    // =================================================================
+
+    static void apply_position_offsets(LayoutNode* node, const Viewport& vp,
+        const StyleStorageSoA& storage, float root_fs)
+    {
+        if (!node) return;
+
+        const bool is_absolute =
+            node->style_soa_idx != UINT32_MAX &&
+            storage.positions[node->style_soa_idx] == style::Position::Absolute;
+
+        if (!is_absolute) {
+            node->geometry.flow_x = node->geometry.x;
+            node->geometry.flow_y = node->geometry.y;
+        }
+
+        if (node->type == BoxType::Block && node->style_soa_idx != UINT32_MAX
+            && storage.positions[node->style_soa_idx] == style::Position::Relative) {
+            layout_relative(node, vp, storage, root_fs);
+        }
+
+        for (auto& c : node->children) {
+            apply_position_offsets(c.get(), vp, storage, root_fs);
+        }
+    }
+
+    // =================================================================
+    //  Absolute positioning
+    // =================================================================
+
+    // Рекурсивный обход: для каждого узла разложить его absolute_children
+    // относительно его content-бокса, затем спуститься к детям.
+    static void layout_absolute_descendants(LayoutNode* cb, const Viewport& vp,
+        const StyleStorageSoA& storage, float root_fs, const TextMetrics& tm)
+    {
+        if (!cb) return;
+
+        const float cb_content_width = cb->geometry.width
+            - cb->geometry.border_left - cb->geometry.padding_left
+            - cb->geometry.padding_right - cb->geometry.border_right;
+        const float cb_content_height = cb->geometry.height
+            - cb->geometry.border_top - cb->geometry.padding_top
+            - cb->geometry.padding_bottom - cb->geometry.border_bottom;
+
+        for (LayoutNode* child : cb->absolute_children) {
+            if (!child || child->style_soa_idx == UINT32_MAX) continue;
+            layout_absolute(child, cb_content_width, cb_content_height,
+                vp, storage, root_fs, tm);
+            // У absolute-узла могут быть свои absolute-потомки.
+            layout_absolute_descendants(child, vp, storage, root_fs, tm);
+        }
+
+        for (auto& child : cb->children) {
+            layout_absolute_descendants(child.get(), vp, storage, root_fs, tm);
+        }
+    }
+
+    // Раскладка одного absolute-узла относительно content-бокса его CB.
+    static void layout_absolute(LayoutNode* node, float cb_content_width,
+        float cb_content_height, const Viewport& vp,
+        const StyleStorageSoA& storage, float root_fs, const TextMetrics& tm)
+    {
+        const uint32_t si = node->style_soa_idx;
+        if (si == UINT32_MAX) return;
+        if (storage.positions[si] != style::Position::Absolute) return;
+
+        const float fs = storage.font_sizes[si];
+        const style::Length& left_inset = storage.left_insets[si];
+        const style::Length& right_inset = storage.right_insets[si];
+        const style::Length& top_inset = storage.top_insets[si];
+        const style::Length& bottom_inset = storage.bottom_insets[si];
+
+        const bool has_left = !left_inset.is_auto();
+        const bool has_right = !right_inset.is_auto();
+        const bool has_top = !top_inset.is_auto();
+        const bool has_bottom = !bottom_inset.is_auto();
+
+        const float left = has_left
+            ? resolve_px(left_inset, fs, root_fs, vp, cb_content_width) : 0.0f;
+        const float right = has_right
+            ? resolve_px(right_inset, fs, root_fs, vp, cb_content_width) : 0.0f;
+        const float top = (has_top && cb_content_height >= 0.0f)
+            ? resolve_px(top_inset, fs, root_fs, vp, cb_content_height) : 0.0f;
+        const float bottom = (has_bottom && cb_content_height >= 0.0f)
+            ? resolve_px(bottom_inset, fs, root_fs, vp, cb_content_height) : 0.0f;
+
+        const style::Length& width_spec = storage.widths[si];
+        const style::Length& height_spec = storage.heights[si];
+        const bool width_auto = width_spec.is_auto() || width_spec.is_none();
+        const bool height_auto = height_spec.is_auto() || height_spec.is_none();
+
+        // -------- width (упрощённая матрица CSS 2.1 §10.3.7) --------
+        float computed_width;
+        if (!width_auto) {
+            computed_width = resolve_px(width_spec, fs, root_fs, vp, cb_content_width);
+        }
+        else if (has_left && has_right) {
+            computed_width = std::max(0.0f, cb_content_width - left - right);
+        }
+        else if (has_left) {
+            computed_width = std::max(0.0f, cb_content_width - left);
+        }
+        else if (has_right) {
+            computed_width = std::max(0.0f, cb_content_width - right);
+        }
+        else {
+            computed_width = cb_content_width;
+        }
+
+        // -------- height --------
+        float computed_height = node->geometry.height;   // пока 0, если не auto
+        if (!height_auto) {
+            computed_height = resolve_px(height_spec, fs, root_fs, vp, cb_content_width);
+        }
+        else if (has_top && has_bottom && cb_content_height >= 0.0f) {
+            computed_height = std::max(0.0f, cb_content_height - top - bottom);
+        }
+        else if (has_top && cb_content_height >= 0.0f) {
+            computed_height = std::max(0.0f, cb_content_height - top);
+        }
+        else if (has_bottom && cb_content_height >= 0.0f) {
+            computed_height = std::max(0.0f, cb_content_height - bottom);
+        }
+        // Если height auto и нет top/bottom, оставляем как посчитает
+        // layout_block_container по содержимому.
+
+        // -------- x --------
+        float x;
+        if (has_left) {
+            x = left;
+        }
+        else if (has_right && !width_auto) {
+            x = cb_content_width - right - computed_width;
+        }
+        else {
+            x = node->geometry.flow_x;
+        }
+
+        // -------- y --------
+        float y;
+        if (has_top) {
+            y = top;
+        }
+        else if (has_bottom && !height_auto && cb_content_height >= 0.0f) {
+            y = cb_content_height - bottom - computed_height;
+        }
+        else {
+            y = node->geometry.flow_y;
+        }
+
+        // Разложить содержимое absolute-узла как обычный блок.
+        layout_block_container(node, computed_width, vp, storage, root_fs, tm);
+
+        // Установить итоговые координаты и размеры.
+        node->geometry.x = x;
+        node->geometry.y = y;
+        node->geometry.width = computed_width;
+        if (!height_auto) {
+            node->geometry.height = computed_height;
+        }
+    }
+
+    // =================================================================
+    //  Box model
+    // =================================================================
 
     static void resolve_box_model(LayoutNode* node,
         const StyleStorageSoA& storage,
@@ -480,7 +645,6 @@ private:
                 line_x = 0;
                 line_height = 0;
 
-                // Если это пробел — на новой строке его тоже схлопываем.
                 if (is_space) {
                     child->geometry.x = inner_x;
                     child->geometry.y = inner_y + line_y;
@@ -619,6 +783,17 @@ private:
         bool first_child = true;
 
         for (auto& child : node->children) {
+            // Absolute-дети вырываются из потока:
+            // - не вызываем layout_node
+            // - не увеличиваем y_cursor
+            // - сохраняем static position относительно родителя
+            if (child->style_soa_idx != UINT32_MAX
+                && storage.positions[child->style_soa_idx] == style::Position::Absolute) {
+                child->geometry.flow_x = inner_x + child->geometry.margin_left;
+                child->geometry.flow_y = inner_y + y_cursor;
+                continue;
+            }
+
             layout_node(child.get(), content_width, vp, storage, root_fs, tm);
 
             const float cmt = child->geometry.margin_top;

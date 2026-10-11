@@ -875,6 +875,58 @@ TEST_CASE("LTB relative: flow_x/flow_y preserved",
 
 
 
+TEST_CASE("LTB absolute: left+top+width+height positions absolutely",
+    "[ltb][layout][position][absolute]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div id='cb'><span id='a'></span></div>",
+        "#cb { display: block; position: relative; width: 200px; height: 100px; } "
+        "#a { position: absolute; left: 10px; top: 20px; width: 30px; height: 40px; }");
+    LayoutNode* a = find_by_soa_idx(p.root.get(), 3);
+    REQUIRE(a != nullptr);
+    REQUIRE(a->geometry.x == Approx(10.0f).epsilon(0.001));
+    REQUIRE(a->geometry.y == Approx(20.0f).epsilon(0.001));
+    REQUIRE(a->geometry.width == Approx(30.0f).epsilon(0.001));
+    REQUIRE(a->geometry.height == Approx(40.0f).epsilon(0.001));
+}
+
+TEST_CASE("LTB absolute: not in flow — doesn't affect sibling",
+    "[ltb][layout][position][absolute]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena, "<div><p id='a'></p><p id='b'></p></div>",
+        "div { display: block; } "                       // ← добавлено
+        "p { display: block; height: 30px; margin: 0; } "
+        "#a { position: absolute; top: 0; left: 0; }");
+    LayoutNode* b = find_by_soa_idx(p.root.get(), 4);
+    REQUIRE(b != nullptr);
+    REQUIRE(b->geometry.y == Approx(0.0f).epsilon(0.001));
+}
+
+TEST_CASE("LTB absolute: right + width",
+    "[ltb][layout][position][absolute]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena, "<div id='cb'><p id='a'></p></div>",
+        "#cb { position: relative; width: 200px; height: 100px; } "
+        "#a { position: absolute; right: 10px; width: 30px; height: 20px; }");
+    LayoutNode* a = find_by_soa_idx(p.root.get(), 3);
+    REQUIRE(a != nullptr);
+    REQUIRE(a->geometry.x == Approx(160.0f).epsilon(0.001));
+}
+
+TEST_CASE("LTB absolute: no left/right — static position",
+    "[ltb][layout][position][absolute]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div id='cb'><p>x</p><span id='a'></span></div>",
+        "#cb { position: relative; width: 200px; height: 100px; } "
+        "#a { position: absolute; top: 50px; width: 20px; height: 10px; }");
+    LayoutNode* a = find_by_soa_idx(p.root.get(), 4);
+    REQUIRE(a != nullptr);
+    REQUIRE(a->geometry.y == Approx(50.0f).epsilon(0.001));
+    REQUIRE(a->geometry.x == Approx(a->geometry.flow_x).epsilon(0.001));
+}
+
+
 TEST_CASE("LTB absolute: inline blockified to block", "[ltb][layout][position][absolute]") {
     ArenaAllocator arena;
     auto p = run_pipeline(arena, "<span style='position:absolute'>x</span>", "span { position: absolute; }");
