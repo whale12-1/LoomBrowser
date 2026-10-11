@@ -34,6 +34,11 @@ struct LayoutNode {
     LayoutNode* parent{ nullptr };
     std::vector<std::unique_ptr<LayoutNode>> children;
 
+    // Non-owning pointers to absolute descendants for which this node is the
+    // containing block. Ownership remains with the direct parent via children.
+    // The list is populated during Phase 1.
+    std::vector<LayoutNode*> absolute_children;
+
     void add_child(std::unique_ptr<LayoutNode> child) {
         child->parent = this;
         children.push_back(std::move(child));

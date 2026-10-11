@@ -51,9 +51,23 @@
 **Файлы:** layout_tree_builder.h, tests/layout_tree_builder_tests.cpp
 
 ### Группа C: Absolute core
-**Статус:** ⬜ TODO
+**Статус:** ✅ DONE
 **Зависит от:** B
 **Файлы:** layout_tree_builder.h, tests/layout_tree_builder_tests.cpp
+
+#### C1: Индекс containing block и blockification
+**Статус:** ✅ DONE
+- `absolute_children` в `LayoutNode`
+- Blockification absolute inline-боксов
+- Индекс absolute descendants → containing block
+- Регрессионные тесты
+
+#### C2: Absolute layout
+**Статус:** ⬜
+- Внепоточная раскладка absolute-боксов
+
+#### C3: Дополнительные absolute-возможности
+**Статус:** ⬜
 
 ### Группа D: Static position + polish
 **Статус:** ⬜ TODO
@@ -61,5 +75,5 @@
 
 ## Текущий фокус
 
-Активная группа: **A**
-Следующее действие: написать код для подзадачи 1.
+Активная группа: **C1**
+Следующее действие: реализовать absolute layout (C2).

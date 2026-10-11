@@ -59,6 +59,7 @@ public:
         if (!root) return nullptr;
 
         wrap_anonymous_blocks(root.get());
+        build_absolute_index(root.get(), storage);
         return root;
     }
 
@@ -116,6 +117,14 @@ private:
         auto node = std::make_unique<LayoutNode>();
         node->style_soa_idx = soa_idx;
         node->type = classify_box(storage.displays[soa_idx]);
+
+        // CSS 2.1 §9.7: position: absolute принудительно blockifies
+        // inline / inline-block в block-level.
+        if (storage.positions[soa_idx] == style::Position::Absolute) {
+            if (node->type == BoxType::Inline) {
+                node->type = BoxType::Block;
+            }
+        }
 
         for (const DOMNode* child_dom : dom->children) {
             if (!child_dom) continue;
@@ -245,6 +254,41 @@ private:
         }
         if (run) out.push_back(std::move(run));
         node->children = std::move(out);
+    }
+
+    static void build_absolute_index(LayoutNode* root,
+        const StyleStorageSoA& storage) {
+        if (!root) return;
+        // Рекурсивный обход: для каждого absolute-узла найти CB
+        // и зарегистрировать в cb->absolute_children.
+        collect_absolute(root, root, root, storage);
+    }
+
+    // Обход дерева с отслеживанием текущего CB.
+    // current_cb — ближайший предок с position relative/absolute,
+    // либо root (fallback viewport).
+    static void collect_absolute(LayoutNode* node,
+        LayoutNode* current_cb,
+        LayoutNode* root,
+        const StyleStorageSoA& storage) {
+        if (!node) return;
+
+        LayoutNode* cb_for_children = current_cb;
+        if (node->style_soa_idx != UINT32_MAX) {
+            const auto position = storage.positions[node->style_soa_idx];
+            if (position == style::Position::Relative
+                || position == style::Position::Absolute) {
+                cb_for_children = node;
+            }
+
+            if (position == style::Position::Absolute) {
+                current_cb->absolute_children.push_back(node);
+            }
+        }
+
+        for (auto& child : node->children) {
+            collect_absolute(child.get(), cb_for_children, root, storage);
+        }
     }
 
     // =================================================================

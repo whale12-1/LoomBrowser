@@ -81,6 +81,15 @@ namespace {
         return nullptr;
     }
 
+    inline LayoutNode* find_by_soa_idx(LayoutNode* node, uint32_t soa_idx) {
+        if (!node) return nullptr;
+        if (node->style_soa_idx == soa_idx) return node;
+        for (auto& child : node->children) {
+            if (auto* found = find_by_soa_idx(child.get(), soa_idx)) return found;
+        }
+        return nullptr;
+    }
+
     // Первый НЕпробельный Text-потомок — рекурсивно через AnonymousBlock.
     // Нужно потому, что теперь текст обёрнут в AnonymousBlock и лежит
     // на один уровень глубже, чем раньше.
@@ -854,6 +863,7 @@ TEST_CASE("LTB relative: flow_x/flow_y preserved",
     auto p = run_pipeline(arena,
         "<div id='a'></div>",
         "#a { display: block; position: relative; left: 10px; top: 5px; }");
+
     LayoutNode* body = child_of_type(p.root.get(), BoxType::Block);
     LayoutNode* a = child_of_type(body, BoxType::Block);
     REQUIRE(a != nullptr);
@@ -863,3 +873,50 @@ TEST_CASE("LTB relative: flow_x/flow_y preserved",
     REQUIRE(a->geometry.flow_y == Approx(0.0f).epsilon(0.001));
 }
 
+
+
+TEST_CASE("LTB absolute: inline blockified to block", "[ltb][layout][position][absolute]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena, "<span style='position:absolute'>x</span>", "span { position: absolute; }");
+    REQUIRE(p.root != nullptr);
+    REQUIRE(p.root->absolute_children.size() == 1);
+    REQUIRE(p.root->absolute_children[0]->type == BoxType::Block);
+}
+
+TEST_CASE("LTB absolute: registered under relative parent", "[ltb][layout][position][absolute]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena, "<div id='p'><span id='c'></span></div>", "#p { display: block; position: relative; } #c { position: absolute; }");
+    REQUIRE(p.storage.size() >= 4);
+    LayoutNode* parent = find_by_soa_idx(p.root.get(), 2);
+    REQUIRE(parent != nullptr);
+    REQUIRE(parent->absolute_children.size() == 1);
+    REQUIRE(parent->absolute_children[0] == find_by_soa_idx(p.root.get(), 3));
+}
+
+TEST_CASE("LTB absolute: registered under nearest relative ancestor", "[ltb][layout][position][absolute]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena, "<div id='outer'><div id='inner'><span id='c'></span></div></div>", "#outer { position: relative; } #inner { display: block; } #c { position: absolute; }");
+    LayoutNode* outer = find_by_soa_idx(p.root.get(), 2);
+    LayoutNode* inner = find_by_soa_idx(p.root.get(), 3);
+    REQUIRE(outer != nullptr);
+    REQUIRE(inner != nullptr);
+    REQUIRE(outer->absolute_children.size() == 1);
+    REQUIRE(inner->absolute_children.empty());
+    REQUIRE(outer->absolute_children[0] == find_by_soa_idx(p.root.get(), 4));
+}
+
+TEST_CASE("LTB absolute: no CB registered under root", "[ltb][layout][position][absolute]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena, "<div><span style='position:absolute'></span></div>", "");
+    REQUIRE(p.root != nullptr);
+    REQUIRE(p.root->absolute_children.size() == 1);
+    REQUIRE(p.root->absolute_children[0]->type == BoxType::Block);
+}
+
+TEST_CASE("LTB absolute: blockification not for static inline", "[ltb][layout][position][absolute]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena, "<span>x</span>", "span { display: inline; position: static; }");
+    LayoutNode* span = find_by_soa_idx(p.root.get(), 2);
+    REQUIRE(span != nullptr);
+    REQUIRE(span->type == BoxType::Inline);
+}

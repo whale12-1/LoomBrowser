@@ -620,6 +620,15 @@ style::Display::.
 Аналогично для None, Bool, Window, Font — если когда-нибудь
 появятся в вашем коде, квалифицируй явно.
 
+## Layout: порядок операций
+
+- position:relative — это **пост-обработка** flow-позиции.
+  Не вызывать layout_relative внутри layout_node — родитель
+  перезапишет child->geometry.x/y при позиционировании.
+- Правильный порядок: layout_node → apply_position_offsets
+  (сохранить flow_x/flow_y → применить сдвиг → рекурсия).
+- Тот же принцип будет для absolute в группе C.
+
 ASan / LSan
 LSan считает аллокации из арены «утечками», потому что арена не вызывает
 delete. Это by design.
