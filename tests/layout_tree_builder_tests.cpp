@@ -972,3 +972,59 @@ TEST_CASE("LTB absolute: blockification not for static inline", "[ltb][layout][p
     REQUIRE(span != nullptr);
     REQUIRE(span->type == BoxType::Inline);
 }
+
+
+TEST_CASE("LTB absolute: nested absolute CB chain",
+    "[ltb][layout][position][absolute][nested]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div id='cb'><div id='outer'><span id='inner'></span></div></div>",
+        "#cb    { display: block; position: relative; width: 300px; height: 200px; } "
+        "#outer { position: absolute; } "
+        "#inner { position: absolute; }");
+
+    LayoutNode* cb    = find_by_soa_idx(p.root.get(), 2);
+    LayoutNode* outer = find_by_soa_idx(p.root.get(), 3);
+    LayoutNode* inner = find_by_soa_idx(p.root.get(), 4);
+
+    REQUIRE(cb    != nullptr);
+    REQUIRE(outer != nullptr);
+    REQUIRE(inner != nullptr);
+
+    // outer зарегистрирован у cb (единственный CB между ним и root)
+    REQUIRE(cb->absolute_children.size() == 1);
+    REQUIRE(cb->absolute_children[0] == outer);
+
+    // inner зарегистрирован у outer (outer сам absolute → CB)
+    REQUIRE(outer->absolute_children.size() == 1);
+    REQUIRE(outer->absolute_children[0] == inner);
+}
+
+TEST_CASE("LTB absolute: nested absolute layout",
+    "[ltb][layout][position][absolute][nested]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div id='cb'><div id='outer'><span id='inner'></span></div></div>",
+        "#cb    { display: block; position: relative; width: 300px; height: 200px; } "
+        "#outer { position: absolute; left: 50px; top: 50px; "
+        "         width: 100px; height: 100px; } "
+        "#inner { position: absolute; left: 10px; top: 10px; "
+        "         width: 20px; height: 20px; }");
+
+    LayoutNode* outer = find_by_soa_idx(p.root.get(), 3);
+    LayoutNode* inner = find_by_soa_idx(p.root.get(), 4);
+    REQUIRE(outer != nullptr);
+    REQUIRE(inner != nullptr);
+
+    // outer относительно cb content box
+    REQUIRE(outer->geometry.x == Approx(50.0f).epsilon(0.001));
+    REQUIRE(outer->geometry.y == Approx(50.0f).epsilon(0.001));
+    REQUIRE(outer->geometry.width  == Approx(100.0f).epsilon(0.001));
+    REQUIRE(outer->geometry.height == Approx(100.0f).epsilon(0.001));
+
+    // inner относительно outer content box (outer — его CB)
+    REQUIRE(inner->geometry.x == Approx(10.0f).epsilon(0.001));
+    REQUIRE(inner->geometry.y == Approx(10.0f).epsilon(0.001));
+    REQUIRE(inner->geometry.width  == Approx(20.0f).epsilon(0.001));
+    REQUIRE(inner->geometry.height == Approx(20.0f).epsilon(0.001));
+}
