@@ -12,6 +12,7 @@
 #include "style_storage_soa.h"
 #include "selector_matcher.h"
 #include "style_origin.h"
+#include "../css_parser/headers/css_parser.h"
 
 // ============================================================
 //  Прозрачный хэш: позволяет unordered_map<std::string, ...>::find(string_view)
@@ -260,15 +261,15 @@ private:
     }
 
     struct Winner {
-        uint32_t    sheet_index = UINT32_MAX;
-        uint32_t    rule_index = UINT32_MAX;
-        uint32_t    decl_index = 0;
+        Declaration declaration;
+        bool        has_declaration = false;
         Specificity spec;
         uint32_t    order = 0;
         bool        important = false;
+        bool        is_inline = false;
         Origin      origin = Origin::Author;
 
-        bool empty() const { return rule_index == UINT32_MAX; }
+        bool empty() const { return !has_declaration; }
 
         bool dominates(const Winner& o) const {
             if (important != o.important) return important;
@@ -276,6 +277,7 @@ private:
                 if (!important) return origin > o.origin;
                 return origin < o.origin;
             }
+            if (is_inline != o.is_inline) return is_inline;
             if (spec.a != o.spec.a) return spec.a > o.spec.a;
             if (spec.b != o.spec.b) return spec.b > o.spec.b;
             if (spec.c != o.spec.c) return spec.c > o.spec.c;
@@ -310,9 +312,8 @@ private:
                 if (!lookup_prop(d.property, p)) continue;
 
                 Winner w;
-                w.sheet_index = entry.sheet_index;
-                w.rule_index = entry.rule_index;
-                w.decl_index = di;
+                w.declaration = d;
+                w.has_declaration = true;
                 w.spec = entry.spec;
                 w.order = entry.order;
                 w.important = d.important;
@@ -324,12 +325,46 @@ private:
             }
         }
 
+        std::string_view inline_style;
+        for (const auto& attribute : node->attributes) {
+            const std::string_view name(attribute.first.data(), attribute.first.size());
+            if (name == "style") {
+                inline_style = std::string_view(attribute.second.data(), attribute.second.size());
+                break;
+            }
+        }
+
+        ArenaAllocator inline_arena;
+        if (!inline_style.empty()) {
+            CSSParser inline_parser(inline_arena);
+            const std::string inline_css = "* { " + std::string(inline_style) + " }";
+            StyleSheet* inline_sheet = inline_parser.parse(inline_css);
+            if (inline_sheet && !inline_sheet->rules.empty()) {
+                const auto& declarations = inline_sheet->rules.front().declarations;
+                for (const Declaration& d : declarations) {
+                    Prop p;
+                    if (!lookup_prop(d.property, p)) continue;
+
+                    Winner w;
+                    w.declaration = d;
+                    w.has_declaration = true;
+                    w.spec = { 1, 0, 0 };
+                    w.order = UINT32_MAX;
+                    w.important = d.important;
+                    w.is_inline = true;
+                    w.origin = Origin::Author;
+
+                    const size_t pi = style::prop_index(p);
+                    if (winners[pi].empty() || w.dominates(winners[pi]))
+                        winners[pi] = w;
+                }
+            }
+        }
+
         for (size_t pi = 0; pi < style::PROP_COUNT; ++pi) {
             if (winners[pi].empty()) continue;
-            const Declaration& d = index.rule(winners[pi].sheet_index,
-                winners[pi].rule_index)
-                .declarations[winners[pi].decl_index];
-            apply_declaration(static_cast<Prop>(pi), d, idx, parent_idx, storage);
+            apply_declaration(static_cast<Prop>(pi), winners[pi].declaration,
+                idx, parent_idx, storage);
             storage.mark_explicit(idx, static_cast<Prop>(pi));
         }
 

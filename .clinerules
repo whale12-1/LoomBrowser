@@ -1,0 +1,696 @@
+﻿# .clinerules — ToyBrowserEngine
+
+Правила, контекст и инструкции для AI-агентов (Cline, Roo Code, Copilot Chat,
+Cursor, Claude Code и др.). Прочитай этот файл целиком перед любыми действиями
+в проекте. При конфликте между этим файлом и общими знаниями — приоритет у этого
+файла.
+
+---
+
+## 0. TL;DR для быстрого старта
+
+- Проект собирается **только через CMake**, папка сборки — `out/build/x64-Debug`
+  (её создаёт Visual Studio 2022). Не создавай новых папок сборки.
+- **Никогда** не вызывай `cl.exe`, `clang.exe`, `g++`, `gcc` напрямую.
+- Никогда не компилируй отдельные `.cpp` файлы. Только `cmake --build`.
+- Строки DOM — `std::pmr::string`. Не конвертируй их в `std::string` неявно.
+- `Display` в коде — только `style::Display::` (иначе конфликт с X11 на Linux).
+- Qt запрещён в `src/parsers`, `src/layout`, `src/render`, `src/style`.
+- После каждой правки — собери затронутый таргет и прогони тесты.
+
+---
+
+## 1. Обзор проекта
+
+**Название:** ToyBrowserEngine
+**Назначение:** учебный браузерный движок на C++20 — парсинг HTML/CSS,
+каскад стилей, layout, display list, JS-биндинги через QuickJS.
+**Язык:** C++20
+**Сборка:** CMake + Visual Studio 2022 (MSVC) на Windows; Clang на CI (Ubuntu).
+**Тесты:** Catch2 v3.
+**CI:** GitHub Actions (unit-тесты + 6 фаззеров libFuzzer).
+**Репозиторий:** `C:\Users\Lenovo\source\repos\Browser`
+
+### Активные компоненты
+src/
+├── parsers/
+│ ├── html_parser/ HTML-парсер, DOM
+│ ├── css_parser/ CSS-парсер, CSS DOM
+│ ├── selector_matcher/ Selector matching + каскад + specificity
+│ └── arena_memory_allocator/ ArenaAllocator (пул-аллокатор)
+├── layout/ LayoutTreeBuilder, LayoutNode
+├── render/ DisplayListBuilder
+├── style/ StyleStorageSoA (SoA стилей)
+├── js/ JS-биндинги (QuickJS)
+├── net/ Работа с сетью (Qt Network)
+└── widgets/ Qt UI
+
+apps/main.cpp Точка входа приложения
+tests/ Unit-тесты (Catch2)
+fuzz/ Фаззеры (libFuzzer)
+
+
+### Технологический стек
+
+- **C++20** — `std::string_view`, `std::optional`, `std::variant`, concepts,
+  structured bindings
+- **Qt6** — только для UI/рендеринга/сети, не для парсеров и layout
+- **QuickJS** — JS-движок
+- **OpenGL, Freetype, OpenSSL** — для рендеринга и TLS
+- **Catch2 v3** — тесты
+- **libFuzzer + ASan/UBSan** — фаззинг
+- **vcpkg** — менеджер зависимостей (предположительно)
+
+---
+
+## 2. Команды сборки и запуска
+
+**ВАЖНО:** не вызывай `cl.exe`, `clang.exe`, `g++`, `gcc` напрямую.
+Все сборки идут только через CMake. Не компилируй отдельные `.cpp` файлы.
+
+### Сборка (Windows / Visual Studio)
+
+```powershell
+cmake --build out\build\x64-Debug
+
+Собрать только один таргет (быстрее)
+powershell
+cmake --build out\build\x64-Debug --target layout_tree_builder_tests
+cmake --build out\build\x64-Debug --target style_tree_builder_tests
+cmake --build out\build\x64-Debug --target ToyBrowserEngine
+Запуск всех тестов
+powershell
+ctest --test-dir out\build\x64-Debug --output-on-failure
+ctest --test-dir out\build\x64-Debug --output-on-failure --parallel 4
+Запуск конкретного теста напрямую (Catch2)
+powershell
+out\build\x64-Debug\tests\layout_tree_builder_tests.exe
+out\build\x64-Debug\tests\layout_tree_builder_tests.exe "LTB layout*"
+out\build\x64-Debug\tests\layout_tree_builder_tests.exe "[margin]"
+out\build\x64-Debug\tests\css_parser_tests.exe
+out\build\x64-Debug\tests\html_parser_tests.exe
+out\build\x64-Debug\tests\selector_matcher_tests.exe
+out\build\x64-Debug\tests\style_tree_builder_tests.exe
+Отладка падающего теста (Windows)
+powershell
+cdb -g -G out\build\x64-Debug\tests\layout_tree_builder_tests.exe
+Сборка фаззера (WSL / Linux)
+bash
+cd fuzz
+rm -rf build-fuzz
+cmake -B build-fuzz -G Ninja
+cmake --build build-fuzz
+export ASAN_OPTIONS=detect_leaks=0
+./build-fuzz/fuzz_html ../corpus/html/ -runs=1000
+Правила вокруг папки сборки
+Не создавай новую папку сборки (build/, cmake-build-debug/,
+out/build/Release/, build-fuzz/ в Windows и т.п.) без явной просьбы.
+
+out/build/x64-Debug — общая папка с Visual Studio. Если она существует —
+используй её.
+
+Если её нет — сообщи пользователю, что нужно открыть проект в VS и запустить
+Project → Configure Cache (или CMake → Configure).
+
+Если компилятор ругается на stdbool.h, type_traits и др. системные заголовки
+Это значит, что компилятор запущен вне окружения MSVC. Не пытайся
+«починить» код — сообщи пользователю:
+
+Нужно открыть Developer PowerShell for VS 2022 в терминале VS Code
+(или использовать cmake --build out\build\x64-Debug, что автоматически
+подхватит окружение VS).
+
+Не ищи обходных путей — это среда, а не код.
+
+3. Соглашения по коду
+Общие правила
+C++20. Активно используй std::string_view, std::optional,
+std::variant, concepts, structured bindings, ranges.
+
+Форматирование:
+
+Отступ — 4 пробела (не табы).
+
+Максимальная длина строки — 100 символов.
+
+Открывающая { — на той же строке.
+
+Пробелы вокруг операторов и после запятых.
+
+Именование:
+
+snake_case — поля классов, локальные переменные, функции-хелперы.
+
+PascalCase — типы (классы, структуры, enum'ы), публичные методы.
+
+UPPER_SNAKE_CASE — константы (constexpr), макросы.
+
+Приватные поля классов — с суффиксом _ (input_, pos_, errors_).
+
+Include-порядок:
+
+Соответствующий .h (для .cpp).
+Стандартная библиотека (по алфавиту).
+Сторонние библиотеки.
+Свой проект (по алфавиту).
+Комментарии:
+
+Только для объяснения почему, а не что.
+
+Допустимы русский и английский, но внутри одного файла — единый язык.
+
+Избегай комментариев вида // increment i — это шум.
+
+Заголовки:
+
+#pragma once в начале, не include guards.
+
+Публичные типы — в .h, реализация — в .cpp или inline в .h
+(для шаблонов).
+
+Пространства имён:
+
+Не используй using namespace std; нигде.
+
+Допустимо внутри функции: using std::string_view;.
+
+Особенности этого проекта
+DOM строки — std::pmr::string.
+
+Никогда не конвертируй их в std::string неявно.
+
+Используй std::string_view(s.data(), s.size()) для чтения.
+
+Используй .assign(data, size) для записи.
+
+CSS DOM строки — std::string (миграция на pmr ещё не сделана).
+Это временно; не пытайся сделать это сам — задача отдельная.
+
+Арена (ArenaAllocator) владеет всеми DOMNode, StyleSheet.
+
+Никогда не вызывай delete для того, что выделено через arena.Alloc<T>().
+
+Никогда не вызывай деструкторы вручную — арена освобождает всё оптом.
+
+style_soa_idx == UINT32_MAX — маркер «нет своих стилей, бери у предка».
+
+Используй effective_style_idx(node) вместо прямого доступа к storage[x].
+
+Qt НЕ должен появляться в src/parsers, src/layout, src/render,
+src/style. Эти модули — чистый C++ и должны компилироваться без Qt.
+
+Никогда не квалифицируй Display как просто Display:: — только
+style::Display::. Иначе конфликт с ::Display из X11 на Linux.
+Аналогично для Position, Float — если они есть в style, используй
+полную квалификацию.
+
+Стиль тестов (Catch2 v3)
+Один TEST_CASE — одна проверяемая вещь.
+
+Теги в квадратных скобках: [модуль][подмодуль], например
+[ltb][layout][margin], [css_parser][selector][attr].
+
+Для float — Catch::Approx(value).epsilon(0.001), не ==.
+
+Хелперы — в анонимном namespace вверху файла.
+
+Никогда не используй attributes.at("key") — сравнивай через
+std::string_view(s.data(), s.size()).
+
+Имя теста начинается с префикса модуля: "LTB layout: ...",
+"CSSParser: ...", "STB cascade: ...".
+
+4. Архитектура — критичные инварианты
+Pipeline (порядок вызовов)
+text
+HTMLParser::parse          → DOMNode (дерево)
+CSSParser::parse           → StyleSheet (правила)
+StyleTreeBuilder::build    → StyleStorageSoA (стили в SoA)
+LayoutTreeBuilder::build   → LayoutNode (дерево боксов)
+LayoutTreeBuilder::compute_layout → geometry заполнена
+DisplayListBuilder::build  → DisplayList (команды рисования)
+Не меняй порядок. Каждый шаг ожидает на входе результат предыдущего.
+
+Two-phase layout
+Phase 1 (build): viewport-независимая.
+
+Отсеивает display: none и служебные теги (head, script, style, ...).
+
+Классифицирует узлы как Block / Inline / Text.
+
+Создаёт AnonymousBlock там, где inline-дети соседствуют с block-детьми.
+
+Разбивает текст на слова и пробелы (атомарные Text-узлы).
+
+Никогда не читает и не пишет в geometry.
+
+Phase 2 (compute_layout): считает геометрию.
+
+Сверху вниз идут parent_width, viewport, root_fs, TextMetrics.
+
+Размеры накапливаются снизу вверх (родитель узнаёт высоту содержимого,
+только когда дети посчитаны).
+
+Только здесь пишутся x, y, width, height, margin/padding/border.
+
+Margin collapsing (CSS 2.1 § 8.3.1)
+Работает только для block-level в BFC.
+
+Только для вертикальных margin.
+
+Root (<html>, node->parent == nullptr) не схлопывается со своими детьми.
+
+Helper: collapse_margins(a, b) — уже реализован.
+
+Оба положительные → max.
+
+Оба отрицательные → min.
+
+Разные знаки → сумма.
+
+Реализовано:
+
+Sibling collapsing (между соседними блоками).
+
+Parent-child collapsing (top и bottom, с условиями top/bottom edge open,
+auto height, zero min-height).
+
+НЕ реализовано:
+
+Схлопывание через пустые блоки.
+
+Nested empty blocks collapsing.
+
+Inline Formatting Context (IFC)
+Запускается только для AnonymousBlock и <span> (BoxType::Inline).
+
+Пробел в начале строки схлопывается (width не увеличивает курсор).
+
+Перенос — по целым словам, не по символам.
+
+margin-top/margin-bottom у inline-элементов не сдвигают соседей
+по вертикали.
+
+Не реализовано:
+
+vertical-align (baseline, middle, top, bottom).
+
+white-space: nowrap / pre / pre-wrap / pre-line.
+
+Диспетчер layout_node
+cpp
+switch (node->type) {
+case BoxType::Block:           → layout_block_container
+case BoxType::AnonymousBlock:  → layout_ifc (+ width = parent_width)
+case BoxType::Inline:          → layout_inline (вложенный IFC)
+case BoxType::Text:            → layout_text (атомарное слово)
+}
+Каждый тип обрабатывается своей функцией. Не пытайся объединять их без
+причины — это разделение упрощает отладку.
+
+5. Правила для агента
+Что ДЕЛАТЬ
+Читай перед правкой. Прежде чем менять функцию — прочитай её
+реализацию и все её вызовы. Используй grep / поиск по репозиторию.
+
+Минимальные правки. Не рефактори то, что не просили. Не переименовывай.
+Не меняй форматирование соседних строк. Не «улучшай» архитектуру без
+явной просьбы.
+
+Прогоняй тесты после каждой правки.
+
+Собери затронутый таргет: cmake --build out\build\x64-Debug --target <target>.
+Запусти: out\build\x64-Debug\tests\<target>.exe.
+Если тест упал — исправь, не оставляй «на потом».
+Следуй существующему стилю. Если в файле уже принято определённое
+именование — используй его. Не вводи новое только потому, что оно тебе
+нравится.
+
+Пиши тесты на новую функциональность. Каждая новая фича должна иметь
+минимум один TEST_CASE. Если правишь баг — сначала напиши тест, который
+его воспроизводит, потом фиксь.
+
+Коммиты только после зелёных тестов. Сообщение — на английском,
+Conventional Commits: feat:, fix:, test:, ci:, docs:, refactor:,
+chore:.
+Примеры:
+
+feat(layout): add parent-child margin collapsing
+
+fix(css): handle escape sequences in identifiers
+
+test(selector): cover :nth-child edge cases
+
+Документируй TODO. Если что-то не реализовано — оставь явный
+комментарий // TODO: с описанием, что именно отсутствует и почему.
+
+Что НЕ ДЕЛАТЬ
+Не вызывай компиляторы напрямую. Только cmake --build.
+
+Не создавай новые папки сборки без явной просьбы.
+
+Не компилируй отдельные .cpp файлы.
+
+Не используй Qt в src/parsers, src/layout, src/render, src/style.
+Если очень нужно — сначала спроси у пользователя.
+
+Не меняй публичные API без предупреждения. Если функция используется
+в apps/, tests/ или других модулях — изменения сломают сборку.
+
+Не удаляй тесты. Если тест падает — исправляй код, а не тест. Тест
+удаляется только если он явно устарел (например, тестировал удалённую
+фичу), и это надо явно указать.
+
+Не трогай fuzz/corpus/ без явной просьбы. Это seed-корпуса,
+они закоммичены и нужны для CI.
+
+Не добавляй using namespace std;.
+
+Не пиши Display:: без style:: — ошибка компиляции на Linux из-за
+конфликта с ::Display из X11.
+
+Не пиши #include <QtCore> в модулях, где Qt запрещён. Используй
+чистый STL.
+
+Не создавай новые файлы без необходимости. Если можно добавить
+функцию в существующий файл — добавь.
+
+Не пиши new/delete для DOMNode, StyleSheet и подобного — они
+в арене. arena.Alloc<T>() — правильный путь.
+
+Если задача непонятна
+Задай один уточняющий вопрос. Не начинай работу «на угад». Лучше
+уточнить, чем переделать. Примеры хороших уточнений:
+
+«В каком именно файле должна быть новая функция?»
+
+«Какой из двух подходов предпочесть: X или Y?»
+
+«Тесты писать в существующем файле или в новом?»
+
+Примеры плохих уточнений (не задавай):
+
+«Что делать?» (задача уже поставлена).
+
+«Можно я всё перепишу?» (нет).
+
+Если видишь баг в существующем коде
+Сообщи пользователю перед правкой. Опиши: что не так, где, и как
+это проявляется.
+
+Предложи минимальный фикс. Не «переделаю всё», а «поменяю эту
+строку».
+
+Дождись подтверждения, если фикс затрагивает больше одного модуля
+или меняет публичное API.
+
+Напиши регрессионный тест перед фиксом.
+
+Если падает тест, который ты сам написал
+Не «подгоняй» тест под результат — разберись, что пошло не так.
+
+Если тест проверяет правильное поведение, а код его не реализует —
+чини код.
+
+Если тест проверяет неправильное поведение (например, написан под старую
+архитектуру) — перепиши тест, явно указав в комментарии, почему.
+
+6. Полезные ссылки
+CSS 2.1 — https://www.w3.org/TR/CSS21/
+
+Margin collapsing: § 8.3.1
+
+Inline formatting context: § 9.4.2
+
+Block formatting context: § 9.4.1
+
+Visual formatting model: § 9
+
+HTML Living Standard — https://html.spec.whatwg.org/multipage/
+
+Tree construction: § 13
+
+CSS Cascade 4 — https://www.w3.org/TR/css-cascade-4/
+
+Specificity, origins, !important
+
+CSS Values and Units — https://www.w3.org/TR/css-values-4/
+
+Все единицы измерения
+
+Catch2 v3 docs — https://github.com/catchorg/Catch2/blob/devel/docs/Readme.md
+
+libFuzzer docs — https://llvm.org/docs/LibFuzzer.html
+
+AddressSanitizer — https://clang.llvm.org/docs/AddressSanitizer.html
+
+7. Что уже реализовано
+Парсеры
+✅ HTML parser:
+
+RCDATA (<title>, <textarea>)
+
+RAWTEXT (<script>, <style>)
+
+Entity: &amp;, &#65;, &#x41;, &nbsp;
+
+DOCTYPE
+
+Комментарии
+
+Void-теги (<br>, <img>, ...)
+
+Self-closing (<div/> — XML-стиль, не HTML5)
+
+Атрибуты: кавычки, без кавычек, boolean
+
+✅ CSS parser:
+
+Селекторы: tag, class, id, attribute, pseudo-class, pseudo-element
+
+Комбинаторы: , >, +, ~
+
+At-rules: @media, @import, @font-face, @page, @keyframes,
+@supports, @layer
+
+Shorthand expansion: margin, padding, border-width → 4 longhand
+
+Escape-последовательности \XX, \XXXXXX
+
+Custom properties (--foo)
+
+Комментарии, строки с escape
+
+Каскад
+✅ Specificity (a, b, c — ID, класс, тег)
+
+✅ !important
+
+✅ Origin: UserAgent, User, Author (с правильной инверсией для !important)
+
+✅ Наследование
+
+✅ Multiple stylesheets
+
+✅ Rule index по правому краю селектора (быстрый matching)
+
+Layout
+✅ Two-phase pipeline (build + compute_layout)
+
+✅ BFC (block formatting context)
+
+✅ IFC (inline formatting context)
+
+✅ Anonymous block wrapping
+
+✅ Box model: content-box, border-box
+
+✅ margin: auto (горизонтальный)
+
+✅ min-width, max-width, min-height, max-height
+
+✅ Margin collapsing: siblings + parent-child
+
+✅ Text splitting на слова + пробелы
+
+✅ Word wrapping в IFC
+
+✅ text-align: left (по умолчанию; center/right/justify парсятся,
+но не применяются)
+
+Display list
+✅ Rect (background, border)
+
+✅ Text (с font-size, bold)
+
+✅ Обход дерева с накоплением абсолютных координат
+
+JS-биндинги
+✅ document.getElementById
+
+✅ document.querySelector
+
+✅ document.querySelectorAll
+
+✅ document.createElement
+
+✅ element.textContent (get/set)
+
+✅ element.setAttribute, getAttribute, hasAttribute, removeAttribute
+
+✅ element.classList.add/remove/toggle/contains
+
+✅ element.style.setProperty
+
+✅ element.addEventListener (клик)
+
+Инфраструктура
+✅ Unit-тесты (5 наборов, ~200 assertions)
+
+✅ Fuzzing (6 таргетов: html, css, selector, style_tree, layout,
+display_list)
+
+✅ CI (GitHub Actions) — тесты + фаззинг
+
+✅ Arena allocator
+
+✅ SoA (structure of arrays) для стилей
+
+8. Чего ещё НЕТ (можно смело предлагать)
+Критично для реальной работы
+❌ Inline-стили (style="..." в HTML) — самая частая причина, почему
+реальные страницы рендерятся неправильно
+
+❌ Positioning (relative, absolute, fixed, sticky) — парсится,
+но не работает
+
+❌ Проценты от высоты родителя (height: 50%, top: 10%)
+
+Важное для качества
+❌ Flexbox — display: flex парсится, но обрабатывается как block
+
+❌ Grid layout — парсится, не работает
+
+❌ Table layout — отдельный алгоритм
+
+❌ white-space: nowrap / pre / pre-wrap / pre-line
+
+❌ vertical-align (baseline, middle, top, bottom)
+
+❌ Миграция CSS DOM на std::pmr
+
+❌ float (обтекание)
+
+Для портфолио
+❌ Headless renderer loom-render (HTML → PNG/PDF через CLI)
+
+❌ Бенчмарки vs Chromium (время + память)
+
+❌ Полноценный DOM API (appendChild, innerHTML, parentNode,
+children, nextSibling, matches, closest)
+
+❌ Event loop (setTimeout, requestAnimationFrame, queueMicrotask)
+
+❌ Загрузка внешних ресурсов (<link>, <script src>, <img src>)
+
+❌ CSS transitions и animations (transition, @keyframes,
+transform, opacity)
+
+Долгосрочное
+❌ Полноценный HTML5 tree construction (insertion modes)
+
+❌ Adoption agency algorithm (misnested tags)
+
+❌ Multi-threading (парсинг на background-потоке)
+
+❌ WebAssembly сборка (для запуска в браузере)
+
+9. Known issues и грабли
+Файловая система Windows
+Регистрозависимость в Linux CI. Файлы JSEngine.h и jsengine.h —
+разные. Если на Windows собирается, а на Linux — нет, проверь регистр
+в #include и в имени файла.
+
+CRLF vs LF. Не меняй line endings в файлах, которые уже в репозитории.
+
+X11-конфликты на Linux
+Display из X11 конфликтует с вашим style::Display. Всегда пиши
+style::Display::.
+
+Аналогично для None, Bool, Window, Font — если когда-нибудь
+появятся в вашем коде, квалифицируй явно.
+
+ASan / LSan
+LSan считает аллокации из арены «утечками», потому что арена не вызывает
+delete. Это by design.
+
+В фаззерах и тестах используй ASAN_OPTIONS=detect_leaks=0.
+
+Флаг libFuzzer -detect_leaks=0 не работает в новых версиях LLVM —
+используй переменную окружения.
+
+Memory model
+Не пиши delete для того, что в арене.
+
+Не вызывай деструкторы вручную.
+
+Не сохраняй указатели на DOMNode после arena.reset().
+
+Layout
+Margin collapsing работает только для block-level в BFC.
+У inline-элементов margin-top/bottom не сдвигают соседей.
+
+Root (<html>) не схлопывается со своими детьми.
+
+Пустые блоки (высота 0, нет padding/border) — их margin-top и margin-bottom
+должны схлопнуться в один. Это НЕ реализовано.
+
+Тесты
+Не пиши REQUIRE(width == 16.0f). Пиши
+REQUIRE(width == Catch::Approx(16.0f).epsilon(0.001)).
+
+Не пиши attributes.at("class"). Пиши через string_view.
+
+Не полагайся на порядок элементов в unordered_map.
+
+10. Как сообщать о результатах
+После успешной правки
+Коротко: что сделал, какие файлы тронул, какие тесты прогнал.
+
+Пример:
+
+Готово. Изменил style_tree_builder.h: добавил поле is_inline в
+Winner и проверку в dominates(). Добавил 4 теста в
+style_tree_builder_tests.cpp. Прогнал — 38 тестов, 38 зелёных.
+
+Если что-то не получилось
+Честно скажи что именно и почему. Не притворяйся, что всё ок.
+
+Пример:
+
+Не смог собрать: компилятор не находит stdbool.h. Это значит, что
+терминал VS Code запущен без окружения MSVC. Нужно переключить на
+Developer PowerShell for VS 2022.
+
+Если нужен ввод пользователя
+Задай один конкретный вопрос. Не список из десяти.
+
+Пример:
+
+В layout_ifc не понятно, как обрабатывать vertical-align: baseline.
+Есть два варианта: (а) считать baseline из font-metrics, (б) пока
+использовать top. Какой предпочесть?
+
+11. Финальные правила
+Не ломай то, что работает. Если код собирается и тесты зелёные —
+сохраняй это состояние.
+
+Маленькие шаги. Одна правка — один прогон тестов. Не делай десять
+изменений сразу.
+
+Честность важнее скорости. Если не уверен — спроси. Если сломал —
+скажи.
+
+Стиль важнее «правильности». Используй существующий код как образец.
+
+Читай .clinerules перед каждой сессией. Он обновляется.

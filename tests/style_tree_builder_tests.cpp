@@ -536,6 +536,73 @@ TEST_CASE("STB important: !important vs !important same specificity — "
 }
 
 
+TEST_CASE("STB inline style: overrides tag selector",
+    "[stb][inline]") {
+    HtmlBodyDiv h;
+    h.div->attributes["style"] = " color : red ; ";
+    StyleSheet s;
+    s.rules.push_back(rtag("div", { decl_("color", "blue") }));
+
+    auto soa = StyleTreeBuilder::build(h.html, s);
+    REQUIRE(soa.text_colors[2] == 0xFF0000FFu);
+}
+
+TEST_CASE("STB inline style: overrides class and id selectors",
+    "[stb][inline]") {
+    HtmlBodyDiv h;
+    set_id(h.div, "target");
+    set_class(h.div, "box");
+    h.div->attributes["style"] = "color: red";
+    StyleSheet s;
+    s.rules.push_back(rule_({ one(cl("box")) }, { decl_("color", "green") }));
+    s.rules.push_back(rule_({ one(id_("target")) }, { decl_("color", "blue") }));
+
+    auto soa = StyleTreeBuilder::build(h.html, s);
+    REQUIRE(soa.text_colors[2] == 0xFF0000FFu);
+}
+
+TEST_CASE("STB inline style: stylesheet important beats normal inline declaration",
+    "[stb][inline][important]") {
+    HtmlBodyDiv h;
+    h.div->attributes["style"] = " color : red ; ";
+    StyleSheet s;
+    s.rules.push_back(rtag("div", { decl_("color", "blue", true) }));
+
+    auto soa = StyleTreeBuilder::build(h.html, s);
+    REQUIRE(soa.text_colors[2] == 0x0000FFFFu);
+}
+
+TEST_CASE("STB inline style: inline important wins cascade",
+    "[stb][inline][important]") {
+    HtmlBodyDiv h;
+    set_id(h.div, "target");
+    h.div->attributes["style"] = " color : red ! important ; ";
+    StyleSheet s;
+    s.rules.push_back(rule_({ one(id_("target")) }, { decl_("color", "blue", true) }));
+
+    auto soa = StyleTreeBuilder::build(h.html, s);
+    REQUIRE(soa.text_colors[2] == 0xFF0000FFu);
+}
+TEST_CASE("STB inline: two elements with different inline colors",
+    "[stb][inline]") {
+    Tree tree;
+    DOMNode* root = tree.E("root");
+    DOMNode* red = tree.E("div", root);
+    DOMNode* blue = tree.E("div", root);
+    red->attributes["style"] = "color: red";
+    blue->attributes["style"] = "color: blue";
+
+    StyleSheet sheet;
+    auto soa = StyleTreeBuilder::build(root, sheet);
+
+    REQUIRE(soa.size() == 3);
+    REQUIRE(soa.text_colors[1] == 0xFF0000FFu);
+    REQUIRE(soa.text_colors[2] == 0x0000FFFFu);
+    REQUIRE(soa.text_colors[1] != soa.text_colors[2]);
+}
+
+
+
 TEST_CASE("STB inherit: color inherits to children", "[stb][inherit]") {
     HtmlBodyDiv h;
     StyleSheet s;
