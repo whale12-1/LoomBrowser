@@ -728,3 +728,51 @@ TEST_CASE("LTB integration: nested cards stacked vertically",
     REQUIRE(c1->geometry.y == 0.0f);
     REQUIRE(c2->geometry.y == 100.0f);
 }
+
+TEST_CASE("LTB layout: parent-child margin collapses through body",
+    "[ltb][layout][margin][collapse]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div id='parent'><div id='child'></div></div>",
+        "html, body { display: block; margin: 0; padding: 0; } "
+        "#parent, #child { display: block; height: 10px; } "
+        "#child { margin-top: 15px; }");
+
+    LayoutNode* html = p.root.get();
+    LayoutNode* body = child_of_type(html, BoxType::Block);
+    LayoutNode* parent = child_of_type(body, BoxType::Block);
+    LayoutNode* child = child_of_type(parent, BoxType::Block);
+
+    REQUIRE(parent != nullptr);
+    REQUIRE(child != nullptr);
+
+    // Margin вытек из child в parent, потом в body (цепочка collapse).
+    REQUIRE(parent->geometry.margin_top == 15.0f);
+    REQUIRE(body->geometry.margin_top == 15.0f);
+
+    // Позиции в локальных координатах:
+    REQUIRE(parent->geometry.y == 0.0f);    // относительно body
+    REQUIRE(body->geometry.y == 15.0f);   // относительно html
+    REQUIRE(child->geometry.y == 0.0f);    // относительно parent
+}
+
+TEST_CASE("LTB layout: parent bottom margin collapses with last block child",
+    "[ltb][layout][margin]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div id='parent'><div id='child'></div></div><div id='next'></div>",
+        "html, body { display: block; margin: 0; padding: 0; } "
+        "#parent { display: block; } "
+        "#child { display: block; height: 20px; margin-bottom: 15px; } "
+        "#next { display: block; height: 10px; }",
+        500.0f);
+    LayoutNode* body = child_of_type(p.root.get(), BoxType::Block);
+    LayoutNode* parent = body->children[0].get();
+    LayoutNode* child = child_of_type(parent, BoxType::Block);
+    LayoutNode* next = body->children[1].get();
+
+    REQUIRE(parent->geometry.height == 20.0f);
+    REQUIRE(parent->geometry.margin_bottom == 15.0f);
+    REQUIRE(child->geometry.y == 0.0f);
+    REQUIRE(next->geometry.y == 35.0f);
+}

@@ -485,19 +485,39 @@ private:
         const float inner_y = g.border_top + g.padding_top;
 
         // ------------------------------------------------------------
-        //  Укладка блочных детей с margin collapsing (§ 8.3.1).
-        //
-        //  Между соседними детьми зазор = collapse(prev.margin_bottom, cur.margin_top).
-        //  У первого ребёнка сверху соседа нет — берётся его собственный margin_top.
-        //  После последнего ребёнка остаётся его margin_bottom (учитывается
-        //  в content_height — как это было и раньше).
-        //
-        //  Ограничение: пока НЕ реализовано parent-child collapsing и
-        //  схлопывание через пустые блоки.
+        //  Схлопывание вертикальных margin между соседними детьми и через
+        //  границы родителя (CSS 2.1 §8.3.1).
+        //  Parent-child collapse переносит margin потомка на родителя,
+        //  поэтому сам потомок позиционируется без этого margin.
         // ------------------------------------------------------------
+        const bool has_children = !node->children.empty();
+        bool collapse_top_with_child = false;
+        bool collapse_bottom_with_child = false;
+        const bool top_edge_open = g.border_top == 0.0f && g.padding_top == 0.0f;
+        const bool bottom_edge_open = g.border_bottom == 0.0f && g.padding_bottom == 0.0f;
+        bool auto_height = !is_real;
+        bool zero_min_height = true;
+
+        if (is_real) {
+            const uint32_t si = node->style_soa_idx;
+            auto_height = storage.heights[si].is_auto() || storage.heights[si].is_none();
+            const style::Length& min_h = storage.min_heights[si];
+            zero_min_height = min_h.value == 0.0f || min_h.is_none();
+        }
+
+        const bool is_root = (node->parent == nullptr);
+
+        if (!is_root && has_children && node->children.front()->is_block_level()
+            && top_edge_open)
+            collapse_top_with_child = true;
+
+        if (!is_root && has_children && node->children.back()->is_block_level()
+            && bottom_edge_open && auto_height && zero_min_height)
+            collapse_bottom_with_child = true;
+
         float y_cursor = 0.0f;
         float prev_bottom = 0.0f;
-        bool  first_child = true;
+        bool first_child = true;
 
         for (auto& child : node->children) {
             layout_node(child.get(), content_width, vp, storage, root_fs, tm);
@@ -506,9 +526,10 @@ private:
             const float cmb = child->geometry.margin_bottom;
             const float cml = child->geometry.margin_left;
             const float ch = child->geometry.height;
+            const bool collapse_this_top = first_child && collapse_top_with_child;
 
             const float gap = first_child
-                ? cmt
+                ? (collapse_this_top ? 0.0f : cmt)
                 : collapse_margins(prev_bottom, cmt);
 
             child->geometry.x = inner_x + cml;
@@ -519,8 +540,17 @@ private:
             first_child = false;
         }
 
-        // Нижний margin последнего ребёнка всё ещё входит в высоту контейнера.
-        y_cursor += prev_bottom;
+        if (collapse_top_with_child)
+            g.margin_top = collapse_margins(g.margin_top, node->children.front()->geometry.margin_top);
+
+        // При схлопывании с последним ребёнком его нижний margin выходит
+        // за content box и объединяется с margin родителя.
+        if (collapse_bottom_with_child) {
+            g.margin_bottom = collapse_margins(g.margin_bottom, prev_bottom);
+        }
+        else {
+            y_cursor += prev_bottom;
+        }
 
         // -------- content_height --------
         float content_height = y_cursor;
