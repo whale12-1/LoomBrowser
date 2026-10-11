@@ -397,6 +397,10 @@ private:
             {"max-width",      P::MaxWidth},
             {"min-height",     P::MinHeight},
             {"max-height",     P::MaxHeight},
+            {"top",            P::Top},
+            {"right",          P::Right},
+            {"bottom",         P::Bottom},
+            {"left",           P::Left},
             {"margin-top",     P::MarginTop},
             {"margin-right",   P::MarginRight},
             {"margin-bottom",  P::MarginBottom},
@@ -502,6 +506,10 @@ private:
         case Prop::MaxWidth:   storage.max_widths[idx] = parse_length(v); break;
         case Prop::MinHeight:  storage.min_heights[idx] = parse_length(v); break;
         case Prop::MaxHeight:  storage.max_heights[idx] = parse_length(v); break;
+        case Prop::Top:        storage.top_insets[idx] = parse_length(v); break;
+        case Prop::Right:      storage.right_insets[idx] = parse_length(v); break;
+        case Prop::Bottom:     storage.bottom_insets[idx] = parse_length(v); break;
+        case Prop::Left:       storage.left_insets[idx] = parse_length(v); break;
         case Prop::MarginTop:    storage.margin_top[idx] = parse_length(v); break;
         case Prop::MarginRight:  storage.margin_right[idx] = parse_length(v); break;
         case Prop::MarginBottom: storage.margin_bottom[idx] = parse_length(v); break;

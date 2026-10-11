@@ -23,12 +23,13 @@ namespace style {
     enum class Justify : uint8_t { Start, End, Center, SpaceBetween, SpaceAround, SpaceEvenly };
     enum class AlignItems : uint8_t { Stretch, FlexStart, FlexEnd, Center, Baseline };
 
-    // ---- Идентификатор CSS-свойства. Используется в таблице каскада ----
+    // ---- пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ CSS-пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ. пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ ----
     enum class Prop : uint16_t {
         Display, Position, Float, Overflow, Visibility, BoxSizing, ZIndex, Opacity,
         Color, BackgroundColor,
         FontSize, FontWeight, FontStyle, LineHeight, TextAlign, LetterSpacing, WhiteSpace,
         Width, Height, MinWidth, MaxWidth, MinHeight, MaxHeight,
+        Top, Right, Bottom, Left,
         MarginTop, MarginRight, MarginBottom, MarginLeft,
         PaddingTop, PaddingRight, PaddingBottom, PaddingLeft,
         BorderTopWidth, BorderRightWidth, BorderBottomWidth, BorderLeftWidth,
@@ -41,7 +42,7 @@ namespace style {
 
     inline size_t prop_index(Prop p) { return static_cast<size_t>(p); }
 
-    // Наследуемые свойства — критично для правильного дерева.
+    // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ.
     inline bool is_inherited(Prop p) {
         switch (p) {
         case Prop::Color: case Prop::FontSize: case Prop::FontWeight:
@@ -52,7 +53,7 @@ namespace style {
         }
     }
 
-    // ---- Длина. Откладываем resolve относительных единиц до layout ----
+    // ---- пїЅпїЅпїЅпїЅпїЅ. пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ resolve пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ layout ----
     enum class Unit : uint8_t {
         Px, Em, Rem, Percent, Vw, Vh, Vmin, Vmax, Pt, Cm, Mm, In,
         Auto, None
@@ -67,7 +68,7 @@ namespace style {
         bool is_zero() const { return value == 0.0f && unit == Unit::Px; }
     };
 
-    // ---- Цвет 0xRRGGBBAA ----
+    // ---- пїЅпїЅпїЅпїЅ 0xRRGGBBAA ----
     struct Color {
         uint8_t r = 0, g = 0, b = 0, a = 255;
         uint32_t pack() const {

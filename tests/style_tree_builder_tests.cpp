@@ -93,6 +93,51 @@ namespace {
 
 
 
+TEST_CASE("STB: top px", "[stb][positioning][inset]") {
+    HtmlBodyDiv h;
+    StyleSheet s;
+    s.rules.push_back(rtag("div", { decl_("top", "10px") }));
+    auto soa = StyleTreeBuilder::build(h.html, s);
+    REQUIRE(soa.top_insets[2].value == Catch::Approx(10.0f).epsilon(0.001));
+    REQUIRE(soa.top_insets[2].unit == Unit::Px);
+}
+
+TEST_CASE("STB: left percent", "[stb][positioning][inset]") {
+    HtmlBodyDiv h;
+    StyleSheet s;
+    s.rules.push_back(rtag("div", { decl_("left", "50%") }));
+    auto soa = StyleTreeBuilder::build(h.html, s);
+    REQUIRE(soa.left_insets[2].value == Catch::Approx(50.0f).epsilon(0.001));
+    REQUIRE(soa.left_insets[2].unit == Unit::Percent);
+}
+
+TEST_CASE("STB: right auto default", "[stb][positioning][inset]") {
+    HtmlBodyDiv h;
+    StyleSheet s;
+    auto soa = StyleTreeBuilder::build(h.html, s);
+    REQUIRE(soa.right_insets[2].value == Catch::Approx(0.0f).epsilon(0.001));
+    REQUIRE(soa.right_insets[2].unit == Unit::Auto);
+}
+
+TEST_CASE("STB: bottom auto explicit", "[stb][positioning][inset]") {
+    HtmlBodyDiv h;
+    StyleSheet s;
+    s.rules.push_back(rtag("div", { decl_("bottom", "auto") }));
+    auto soa = StyleTreeBuilder::build(h.html, s);
+    REQUIRE(soa.bottom_insets[2].unit == Unit::Auto);
+}
+
+TEST_CASE("STB: inset properties do not inherit", "[stb][positioning][inset]") {
+    HtmlBodyDiv h;
+    StyleSheet s;
+    s.rules.push_back(rtag("html", { decl_("top", "10px") }));
+    auto soa = StyleTreeBuilder::build(h.html, s);
+    REQUIRE(soa.top_insets[0].value == Catch::Approx(10.0f).epsilon(0.001));
+    REQUIRE(soa.top_insets[2].value == Catch::Approx(0.0f).epsilon(0.001));
+    REQUIRE(soa.top_insets[2].unit == Unit::Auto);
+}
+
+
 TEST_CASE("STB: display block applied", "[stb][value]") {
     HtmlBodyDiv h;
     StyleSheet s;

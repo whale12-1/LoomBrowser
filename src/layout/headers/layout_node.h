@@ -14,6 +14,8 @@ enum class BoxType {
 struct LayoutGeometry {
     float x{ 0.0f }, y{ 0.0f };
     float width{ 0.0f }, height{ 0.0f };
+    float flow_x{ 0.0f };
+    float flow_y{ 0.0f };
 
     float margin_top{ 0.0f }, margin_right{ 0.0f }, margin_bottom{ 0.0f }, margin_left{ 0.0f };
     float padding_top{ 0.0f }, padding_right{ 0.0f }, padding_bottom{ 0.0f }, padding_left{ 0.0f };
@@ -21,13 +23,13 @@ struct LayoutGeometry {
 };
 
 struct LayoutNode {
-    // UINT32_MAX (== INVALID_INDEX) для AnonymousBlock и Text:
-    // стили берутся у ближайшего реального предка.
+    // UINT32_MAX (== INVALID_INDEX) пїЅпїЅпїЅ AnonymousBlock пїЅ Text:
+    // пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ.
     uint32_t style_soa_idx{ UINT32_MAX };
     BoxType type{ BoxType::Block };
 
     LayoutGeometry geometry;
-    std::string text_content;   // заполняется только для BoxType::Text
+    std::string text_content;   // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ BoxType::Text
 
     LayoutNode* parent{ nullptr };
     std::vector<std::unique_ptr<LayoutNode>> children;

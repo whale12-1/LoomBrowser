@@ -15,21 +15,21 @@ using style::Length;   using style::Unit;       using style::Color;
 using style::Prop;     using style::PROP_MASK_WORDS;
 
 
-// style_storage_soa.h (внутри или рядом со struct StyleStorageSoA)
+// style_storage_soa.h (пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅ struct StyleStorageSoA)
 
 
 struct StyleStorageSoA {
     // =========================================================
-    // 1. Топология (индексы по узлам, а не указатели)
+    // 1. пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ (пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅ, пїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ)
     // =========================================================
     std::vector<uint32_t> parent_indices;
     std::vector<uint32_t> first_child_indices;
-    std::vector<uint32_t> last_child_indices;    // ускоряет :last-child, реверс
+    std::vector<uint32_t> last_child_indices;    // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ :last-child, пїЅпїЅпїЅпїЅпїЅпїЅ
     std::vector<uint32_t> next_sibling_indices;
     std::vector<DOMNode*> dom_nodes;
 
     // =========================================================
-    // 2. Вычисленные стили
+    // 2. пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ
     // =========================================================
     std::vector<style::Display>    displays;
     std::vector<Position>   positions;
@@ -51,26 +51,27 @@ struct StyleStorageSoA {
     std::vector<uint32_t>   text_colors;          // 0xRRGGBBAA
     std::vector<uint32_t>   background_colors;
 
-    // Размеры (не разрешены до layout — em/rem/% остаются как есть)
+    // пїЅпїЅпїЅпїЅпїЅпїЅпїЅ (пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ layout пїЅ em/rem/% пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅ)
     std::vector<Length>     widths, heights;
     std::vector<Length>     min_widths, max_widths, min_heights, max_heights;
+    std::vector<Length>     top_insets, right_insets, bottom_insets, left_insets;
     std::vector<Length>     margin_top, margin_right, margin_bottom, margin_left;
     std::vector<Length>     padding_top, padding_right, padding_bottom, padding_left;
     std::vector<Length>     border_top_width, border_right_width, border_bottom_width, border_left_width;
     std::vector<Length>     flex_bases;
     std::vector<float>      flex_grows, flex_shrinks;
 
-    // Текст — разрешён в px (нужен для resolve em у детей)
+    // пїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ px (пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ resolve em пїЅ пїЅпїЅпїЅпїЅпїЅ)
     std::vector<float>      font_sizes;
     std::vector<float>      line_heights;         // 0.0 = normal
     std::vector<float>      letter_spacings;
 
     // =========================================================
-    // 3. Служебные битмаски
+    // 3. пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
     // =========================================================
-    // explicit_mask[idx] — какие свойства были заданы в CSS явно
-    // (битовая маска по Prop::COUNT). Нужна для наследования.
-    std::vector<uint64_t>   explicit_mask; // PROP_MASK_WORDS слов на узел
+    // explicit_mask[idx] пїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅ CSS пїЅпїЅпїЅпїЅ
+    // (пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅ Prop::COUNT). пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
+    std::vector<uint64_t>   explicit_mask; // PROP_MASK_WORDS пїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅ
 
     // =========================================================
     // API
@@ -112,6 +113,10 @@ struct StyleStorageSoA {
         max_widths.push_back({ 0.0f, Unit::None });
         min_heights.push_back({ 0.0f, Unit::Px });
         max_heights.push_back({ 0.0f, Unit::None });
+        top_insets.push_back({ 0.0f, Unit::Auto });
+        right_insets.push_back({ 0.0f, Unit::Auto });
+        bottom_insets.push_back({ 0.0f, Unit::Auto });
+        left_insets.push_back({ 0.0f, Unit::Auto });
         margin_top.push_back({ 0.0f, Unit::Px });
         margin_right.push_back({ 0.0f, Unit::Px });
         margin_bottom.push_back({ 0.0f, Unit::Px });
@@ -136,7 +141,7 @@ struct StyleStorageSoA {
         return i;
     }
 
-    // --- Работа с маской «явно задано» ---
+    // --- пїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ ---
     void mark_explicit(uint32_t idx, Prop p) {
         uint64_t* word = &explicit_mask[idx * PROP_MASK_WORDS + (style::prop_index(p) >> 6)];
         *word |= (1ull << (style::prop_index(p) & 63));
