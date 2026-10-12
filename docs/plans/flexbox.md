@@ -15,7 +15,7 @@
 ### A2 — flex algorithm
 
 - [ ] Replace the A1 block-layout fallback with the real flex algorithm.
-- [ ] Implement flex child normalization and text grouping as part of A2.
+- [x] Implement flex child normalization and text grouping as part of A2.
 - [ ] Add coverage for flex direction, sizing, alignment, and wrapping.
 
 ## Scope constraints

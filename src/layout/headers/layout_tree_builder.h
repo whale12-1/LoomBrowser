@@ -58,7 +58,7 @@ public:
         auto root = build_node(0, storage, dom_to_soa);
         if (!root) return nullptr;
 
-        wrap_anonymous_blocks(root.get());
+        wrap_anonymous_blocks(root.get(), storage);
         build_absolute_index(root.get(), storage);
         return root;
     }
@@ -206,10 +206,16 @@ private:
     // Обёртка создаётся, даже если block-детей нет вовсе — иначе
     // текст в блоке не получит inline formatting context и уложится
     // вертикально по одной ноде на строку.
-    static void wrap_anonymous_blocks(LayoutNode* node) {
+    static void wrap_anonymous_blocks(LayoutNode* node,
+        const StyleStorageSoA& storage) {
         if (!node) return;
 
-        for (auto& c : node->children) wrap_anonymous_blocks(c.get());
+        for (auto& c : node->children) wrap_anonymous_blocks(c.get(), storage);
+
+        if (is_flex_container(node, storage)) {
+            normalize_flex_children(node, storage);
+            return;
+        }
 
         if (node->type != BoxType::Block) return;
 
@@ -240,6 +246,41 @@ private:
             }
         }
         if (run) out.push_back(std::move(run));
+        node->children = std::move(out);
+    }
+
+    static void normalize_flex_children(LayoutNode* node,
+        const StyleStorageSoA& storage) {
+        std::vector<std::unique_ptr<LayoutNode>> out;
+        out.reserve(node->children.size());
+
+        std::unique_ptr<LayoutNode> group;
+        for (auto& child : node->children) {
+            const bool is_absolute = child->style_soa_idx != UINT32_MAX
+                && storage.positions[child->style_soa_idx] == style::Position::Absolute;
+
+            if (is_absolute) {
+                if (group) { out.push_back(std::move(group)); group.reset(); }
+                out.push_back(std::move(child));
+                continue;
+            }
+
+            if (child->is_inline_level()) {
+                if (!group) {
+                    group = std::make_unique<LayoutNode>();
+                    group->type = BoxType::AnonymousBlock;
+                    group->style_soa_idx = UINT32_MAX;
+                    group->parent = node;
+                }
+                child->parent = group.get();
+                group->children.push_back(std::move(child));
+            }
+            else {
+                if (group) { out.push_back(std::move(group)); group.reset(); }
+                out.push_back(std::move(child));
+            }
+        }
+        if (group) out.push_back(std::move(group));
         node->children = std::move(out);
     }
 

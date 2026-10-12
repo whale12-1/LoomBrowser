@@ -223,6 +223,91 @@ TEST_CASE("LTB flex: fallback to block layout in A1",
     REQUIRE(paragraph->geometry.width > 0.0f);
 }
 
+
+TEST_CASE("LTB flex: text-only children grouped into single AnonymousBlock",
+    "[ltb][layout][flex][normalize]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena, "<div id='f'>hello world</div>", "#f { display: flex; }");
+    LayoutNode* f = find_by_soa_idx(p.root.get(), 2);
+    REQUIRE(f != nullptr);
+    REQUIRE(f->children.size() == 1);
+    REQUIRE(f->children[0]->type == BoxType::AnonymousBlock);
+    REQUIRE_FALSE(f->children[0]->children.empty());
+}
+
+TEST_CASE("LTB flex: text + block + text → three groups",
+    "[ltb][layout][flex][normalize]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena, "<div id='f'>a<p>b</p>c</div>",
+        "#f { display: flex; } p { display: block; }");
+    LayoutNode* f = find_by_soa_idx(p.root.get(), 2);
+    REQUIRE(f->children.size() == 3);
+    REQUIRE(f->children[0]->type == BoxType::AnonymousBlock);
+    REQUIRE(f->children[1]->type == BoxType::Block);
+    REQUIRE(f->children[2]->type == BoxType::AnonymousBlock);
+}
+
+TEST_CASE("LTB flex: text + inline span + text → single group",
+    "[ltb][layout][flex][normalize]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena, "<div id='f'>a<span>b</span>c</div>",
+        "#f { display: flex; } span { display: inline; }");
+    LayoutNode* f = find_by_soa_idx(p.root.get(), 2);
+    REQUIRE(f->children.size() == 1);
+    REQUIRE(f->children[0]->type == BoxType::AnonymousBlock);
+    REQUIRE(f->children[0]->children.size() == 3);
+    REQUIRE(f->children[0]->children[0]->type == BoxType::Text);
+    REQUIRE(f->children[0]->children[1]->type == BoxType::Inline);
+    REQUIRE(f->children[0]->children[2]->type == BoxType::Text);
+}
+
+TEST_CASE("LTB flex: absolute child breaks the group",
+    "[ltb][layout][flex][normalize]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena, "<div id='f'>a<span style='position:absolute'></span>b</div>",
+        "#f { display: flex; }");
+    LayoutNode* f = find_by_soa_idx(p.root.get(), 2);
+    REQUIRE(f->children.size() == 3);
+    REQUIRE(f->children[0]->type == BoxType::AnonymousBlock);
+    REQUIRE(f->children[1]->type == BoxType::Block);
+    REQUIRE(f->children[2]->type == BoxType::AnonymousBlock);
+}
+
+TEST_CASE("LTB flex: consecutive blocks stay separate",
+    "[ltb][layout][flex][normalize]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena, "<div id='f'><p>1</p><p>2</p></div>",
+        "#f { display: flex; } p { display: block; }");
+    LayoutNode* f = find_by_soa_idx(p.root.get(), 2);
+    REQUIRE(f->children.size() == 2);
+    REQUIRE(f->children[0]->type == BoxType::Block);
+    REQUIRE(f->children[1]->type == BoxType::Block);
+}
+
+TEST_CASE("LTB flex: regular block still uses BFC wrapping",
+    "[ltb][layout][flex][normalize]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena, "<div id='b'>a<p>b</p>c</div>",
+        "#b { display: block; } p { display: block; }");
+    LayoutNode* b = find_by_soa_idx(p.root.get(), 2);
+    REQUIRE(b->children.size() == 3);
+    REQUIRE(b->children[0]->type == BoxType::AnonymousBlock);
+    REQUIRE(b->children[1]->type == BoxType::Block);
+    REQUIRE(b->children[2]->type == BoxType::AnonymousBlock);
+}
+
+TEST_CASE("LTB flex: absolute does not join any text group",
+    "[ltb][layout][flex][normalize]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena, "<div id='f'><span style='position:absolute'>x</span>text</div>",
+        "#f { display: flex; }");
+    LayoutNode* f = find_by_soa_idx(p.root.get(), 2);
+    REQUIRE(f->children.size() == 2);
+    REQUIRE(f->children[0]->type == BoxType::Block);
+    REQUIRE(f->children[1]->type == BoxType::AnonymousBlock);
+}
+
+
 TEST_CASE("LTB build: display:none filters whole subtree",
     "[ltb][build][display_none]") {
     ArenaAllocator arena;
