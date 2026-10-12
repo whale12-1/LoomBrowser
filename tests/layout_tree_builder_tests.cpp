@@ -206,21 +206,25 @@ TEST_CASE("LTB flex: display:block unchanged",
     REQUIRE(p.storage.displays[f->style_soa_idx] == style::Display::Block);
 }
 
-TEST_CASE("LTB flex: fallback to block layout in A1",
+TEST_CASE("LTB flex: real flex layout applied",
     "[ltb][layout][flex]") {
+    // После группы B flex-контейнер раскладывает детей в строку,
+    // а не стопкой. Заглушка A1 удалена.
     ArenaAllocator arena;
     auto p = run_pipeline(arena,
         "<div id='f'><p>x</p></div>",
         "#f { display: flex; width: 200px; } "
-        "p { display: block; height: 20px; }");
+        "p { display: block; width: 100px; height: 20px; }");
     LayoutNode* f = find_by_soa_idx(p.root.get(), 2);
     LayoutNode* paragraph = find_by_soa_idx(p.root.get(), 3);
 
     REQUIRE(f != nullptr);
     REQUIRE(paragraph != nullptr);
     REQUIRE(f->geometry.width == Approx(200.0f).epsilon(0.001));
+    REQUIRE(paragraph->geometry.x == Approx(0.0f).epsilon(0.001));
     REQUIRE(paragraph->geometry.y == Approx(0.0f).epsilon(0.001));
-    REQUIRE(paragraph->geometry.width > 0.0f);
+    REQUIRE(paragraph->geometry.width == Approx(100.0f).epsilon(0.001));
+    REQUIRE(paragraph->geometry.height == Approx(20.0f).epsilon(0.001));
 }
 
 
@@ -1162,4 +1166,127 @@ TEST_CASE("LTB absolute: nested absolute layout",
     REQUIRE(inner->geometry.y == Approx(10.0f).epsilon(0.001));
     REQUIRE(inner->geometry.width  == Approx(20.0f).epsilon(0.001));
     REQUIRE(inner->geometry.height == Approx(20.0f).epsilon(0.001));
+}
+
+
+TEST_CASE("LTB flex row: single child with fixed width", "[ltb][layout][flex][row]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena, "<div id='f'><p id='c'></p></div>",
+        "#f { display: flex; } #c { display: block; width: 100px; height: 30px; }");
+    auto* c = find_by_soa_idx(p.root.get(), 3);
+    REQUIRE(c != nullptr);
+    REQUIRE(c->geometry.x == Approx(0.0f).epsilon(0.001));
+    REQUIRE(c->geometry.y == Approx(0.0f).epsilon(0.001));
+    REQUIRE(c->geometry.width == Approx(100.0f).epsilon(0.001));
+    REQUIRE(c->geometry.height == Approx(30.0f).epsilon(0.001));
+}
+
+TEST_CASE("LTB flex row: two children side by side", "[ltb][layout][flex][row]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena, "<div id='f'><p id='a'></p><p id='b'></p></div>",
+        "#f { display: flex; } #a { display: block; width: 50px; height: 20px; } "
+        "#b { display: block; width: 70px; height: 30px; }");
+    auto* f = find_by_soa_idx(p.root.get(), 2);
+    auto* a = find_by_soa_idx(p.root.get(), 3);
+    auto* b = find_by_soa_idx(p.root.get(), 4);
+    REQUIRE(a->geometry.x == Approx(0.0f).epsilon(0.001));
+    REQUIRE(b->geometry.x == Approx(50.0f).epsilon(0.001));
+    REQUIRE(a->geometry.width == Approx(50.0f).epsilon(0.001));
+    REQUIRE(b->geometry.width == Approx(70.0f).epsilon(0.001));
+    REQUIRE(f->geometry.height == Approx(30.0f).epsilon(0.001));
+}
+
+TEST_CASE("LTB flex row: child margin-right shifts next item", "[ltb][layout][flex][row]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena, "<div id='f'><p id='a'></p><p id='b'></p></div>",
+        "#f { display: flex; } #a { display: block; width: 50px; height: 20px; margin-right: 10px; } "
+        "#b { display: block; width: 70px; height: 20px; }");
+    REQUIRE(find_by_soa_idx(p.root.get(), 4)->geometry.x == Approx(60.0f).epsilon(0.001));
+}
+
+TEST_CASE("LTB flex row: container padding", "[ltb][layout][flex][row]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena, "<div id='f'><p id='a'></p></div>",
+        "#f { display: flex; padding: 10px; } #a { display: block; width: 50px; height: 20px; }");
+    auto* f = find_by_soa_idx(p.root.get(), 2);
+    auto* a = find_by_soa_idx(p.root.get(), 3);
+    REQUIRE(a->geometry.x == Approx(10.0f).epsilon(0.001));
+    REQUIRE(a->geometry.y == Approx(10.0f).epsilon(0.001));
+    REQUIRE(f->geometry.height == Approx(40.0f).epsilon(0.001));
+    REQUIRE(f->geometry.width == Approx(70.0f).epsilon(0.001));
+}
+
+TEST_CASE("LTB flex row: margin collapsing NOT applied",
+    "[ltb][layout][flex][row]") {
+    // В block layout a и b стекались бы вертикально с collapsed margin.
+    // В flex они на одной строке: b.x сдвинут, b.y = собственный margin_top,
+    // а не collapse с a.margin_bottom.
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div id='f'><p id='a'></p><p id='b'></p></div>",
+        "#f { display: flex; } "
+        "#a { display: block; width: 50px; height: 20px; margin-bottom: 10px; } "
+        "#b { display: block; width: 50px; height: 20px; margin-top: 20px; }");
+    LayoutNode* a = find_by_soa_idx(p.root.get(), 3);
+    LayoutNode* b = find_by_soa_idx(p.root.get(), 4);
+    REQUIRE(a != nullptr);
+    REQUIRE(b != nullptr);
+
+    // На одной строке
+    REQUIRE(a->geometry.x == Approx(0.0f).epsilon(0.001));
+    REQUIRE(b->geometry.x == Approx(50.0f).epsilon(0.001));
+    // a без margin-top, b со своим margin-top (не collapsed)
+    REQUIRE(a->geometry.y == Approx(0.0f).epsilon(0.001));
+    REQUIRE(b->geometry.y == Approx(20.0f).epsilon(0.001));
+}
+
+TEST_CASE("LTB flex row: container fixed width and height", "[ltb][layout][flex][row]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena, "<div id='f'><p id='a'></p></div>",
+        "#f { display: flex; width: 200px; height: 100px; } #a { display: block; width: 50px; height: 20px; }");
+    auto* f = find_by_soa_idx(p.root.get(), 2);
+    auto* a = find_by_soa_idx(p.root.get(), 3);
+    REQUIRE(f->geometry.width == Approx(200.0f).epsilon(0.001));
+    REQUIRE(f->geometry.height == Approx(100.0f).epsilon(0.001));
+    REQUIRE(a->geometry.x == Approx(0.0f).epsilon(0.001));
+    REQUIRE(a->geometry.y == Approx(0.0f).epsilon(0.001));
+}
+
+TEST_CASE("LTB flex row: absolute child not in flow", "[ltb][layout][flex][row]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena, "<div id='f'><p id='a'></p><span id='abs' style='position:absolute'></span><p id='b'></p></div>",
+        "#f { display: flex; } #a, #b { display: block; width: 40px; height: 20px; }");
+    auto* b = find_by_soa_idx(p.root.get(), 5);
+    REQUIRE(b != nullptr);
+    REQUIRE(b->geometry.x == Approx(40.0f).epsilon(0.001));
+}
+
+TEST_CASE("LTB flex row: inline-block child with fixed width", "[ltb][layout][flex][row]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena, "<div id='f'><span id='a'></span></div>",
+        "#f { display: flex; } #a { display: inline-block; width: 60px; height: 20px; }");
+    auto* a = find_by_soa_idx(p.root.get(), 3);
+    REQUIRE(a->geometry.x == Approx(0.0f).epsilon(0.001));
+    REQUIRE(a->geometry.width == Approx(60.0f).epsilon(0.001));
+}
+
+TEST_CASE("LTB flex row: three items", "[ltb][layout][flex][row]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena, "<div id='f'><p id='a'></p><p id='b'></p><p id='c'></p></div>",
+        "#f { display: flex; } #a { display: block; width: 30px; height: 10px; } "
+        "#b { display: block; width: 40px; height: 20px; } #c { display: block; width: 50px; height: 15px; }");
+    auto* f = find_by_soa_idx(p.root.get(), 2);
+    REQUIRE(find_by_soa_idx(p.root.get(), 3)->geometry.x == Approx(0.0f).epsilon(0.001));
+    REQUIRE(find_by_soa_idx(p.root.get(), 4)->geometry.x == Approx(30.0f).epsilon(0.001));
+    REQUIRE(find_by_soa_idx(p.root.get(), 5)->geometry.x == Approx(70.0f).epsilon(0.001));
+    REQUIRE(f->geometry.height == Approx(20.0f).epsilon(0.001));
+}
+
+TEST_CASE("LTB flex row: border-box on flex item", "[ltb][layout][flex][row]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena, "<div id='f'><p id='a'></p></div>",
+        "#f { display: flex; } #a { display: block; box-sizing: border-box; width: 100px; padding: 10px; height: 30px; }");
+    auto* a = find_by_soa_idx(p.root.get(), 3);
+    REQUIRE(a->geometry.width == Approx(100.0f).epsilon(0.001));
+    REQUIRE(a->geometry.height == Approx(30.0f).epsilon(0.001));
 }

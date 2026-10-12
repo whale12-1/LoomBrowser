@@ -179,11 +179,7 @@ int main(int argc, char** argv) {
 
     // 3. Каскад
     StyleStorageSoA storage = StyleTreeBuilder::build(root_elem, sources);
-    if (storage.size() == 0) {
-        std::cerr << "error: empty style tree\n";
-        return 1;
-    }
-    std::cout << "      " << storage.size() << " nodes styled\n";
+
 
     // 4. Layout
     std::cout << "[3/5] layout...\n";
@@ -196,6 +192,8 @@ int main(int argc, char** argv) {
     LayoutTreeBuilder::Viewport vp{ float(vw), float(vh) };
     LayoutTreeBuilder::compute_layout(layout.get(), vp, storage,
         make_qt_metrics());
+
+
 
     // 5. Display list
     std::cout << "[4/5] display list...\n";

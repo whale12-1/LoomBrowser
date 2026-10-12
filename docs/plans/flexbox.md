@@ -12,11 +12,14 @@
   behavior, and block-layout fallback.
 - [ ] A1 build verification in Visual Studio (not run by the coding agent).
 
-### A2 — flex algorithm
+### Group B — basic row layout ✅
 
-- [ ] Replace the A1 block-layout fallback with the real flex algorithm.
-- [x] Implement flex child normalization and text grouping as part of A2.
-- [ ] Add coverage for flex direction, sizing, alignment, and wrapping.
+- [x] Replace the A1 block-layout fallback with the real row flex algorithm.
+- [x] Cover fixed-width items, margins, padding, explicit container sizes,
+  absolute exclusion, inline-block items, and border-box items.
+- [x] Add 10 Group B regression tests.
+- [ ] Build verification in Visual Studio (not run by the coding agent).
+
 
 ## Scope constraints
 
