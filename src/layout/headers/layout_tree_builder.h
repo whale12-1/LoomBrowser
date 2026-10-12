@@ -291,12 +291,40 @@ private:
         return 0;
     }
 
+    // Определяет, является ли узел flex-контейнером по его стилю.
+    static bool is_flex_container(const LayoutNode* node,
+        const StyleStorageSoA& storage)
+    {
+        if (!node || node->style_soa_idx == UINT32_MAX) return false;
+        return storage.displays[node->style_soa_idx] == style::Display::Flex;
+    }
+
+    static void layout_flex_container(LayoutNode* node,
+        float parent_width,
+        const Viewport& vp,
+        const StyleStorageSoA& storage,
+        float root_fs,
+        const TextMetrics& tm)
+    {
+        // TODO(A2): заменить на реальный flex algorithm.
+        // Пока — fallback на block layout, чтобы display: flex
+        // не ломал существующие тесты и другие компоненты.
+        layout_block_container(node, parent_width, vp, storage, root_fs, tm);
+    }
+    // Flex-контейнер — новый путь в диспетчере.
+    // Не добавляем BoxType::Flex: flex — это режим layout,
+    // а не тип бокса. Внешне контейнер остаётся Block.
     static void layout_node(LayoutNode* node, float parent_width,
         const Viewport& vp,
         const StyleStorageSoA& storage,
         float root_fs,
         const TextMetrics& tm)
     {
+        if (is_flex_container(node, storage)) {
+            layout_flex_container(node, parent_width, vp, storage, root_fs, tm);
+            return;
+        }
+
         switch (node->type) {
         case BoxType::AnonymousBlock:
             layout_ifc(node, parent_width, vp, storage, root_fs, tm);

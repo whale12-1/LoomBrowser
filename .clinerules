@@ -556,6 +556,17 @@ display_list)
 
 ✅ SoA (structure of arrays) для стилей
 
+## loom-render (headless)
+
+- CLI: apps/render_cli.cpp. Собирается отдельным exe.
+- Рендерит через DisplayListRenderer (QPainter → QImage → PNG).
+- Дампер дерева: TreeDumper (текстовый вывод LayoutNode+SoA).
+- Требует QGuiApplication и Qt platform plugins рядом с exe.
+- На Windows: QT_QPA_PLATFORM=windows → системные шрифты.
+- В CI: QT_QPA_PLATFORM=offscreen + fonts в lib/fonts/ (DejaVu).
+- Команда: out\build\x64-Debug\loom-render.exe page.html -o out.png
+
+
 8. Чего ещё НЕТ (можно смело предлагать)
 Критично для реальной работы
 ❌ Inline-стили (style="..." в HTML) — самая частая причина, почему
@@ -580,9 +591,6 @@ display_list)
 ❌ Миграция CSS DOM на std::pmr
 
 ❌ float (обтекание)
-
-Для портфолио
-❌ Headless renderer loom-render (HTML → PNG/PDF через CLI)
 
 ❌ Бенчмарки vs Chromium (время + память)
 

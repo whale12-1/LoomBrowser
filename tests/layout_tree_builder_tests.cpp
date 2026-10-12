@@ -173,6 +173,56 @@ TEST_CASE("LTB build: display:flex → BoxType::Block",
 
 
 
+
+TEST_CASE("LTB flex: display:flex recognized as flex container",
+    "[ltb][layout][flex]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena, "<div id='f'></div>", "#f { display: flex; }");
+    LayoutNode* f = find_by_soa_idx(p.root.get(), 2);
+
+    REQUIRE(f != nullptr);
+    REQUIRE(f->style_soa_idx != UINT32_MAX);
+    REQUIRE(p.storage.displays[f->style_soa_idx] == style::Display::Flex);
+}
+
+TEST_CASE("LTB flex: flex container stays BoxType::Block",
+    "[ltb][layout][flex]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena, "<div id='f'></div>", "#f { display: flex; }");
+    LayoutNode* f = find_by_soa_idx(p.root.get(), 2);
+
+    REQUIRE(f != nullptr);
+    REQUIRE(f->type == BoxType::Block);
+}
+
+TEST_CASE("LTB flex: display:block unchanged",
+    "[ltb][layout][flex]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena, "<div id='f'></div>", "#f { display: block; }");
+    LayoutNode* f = find_by_soa_idx(p.root.get(), 2);
+
+    REQUIRE(f != nullptr);
+    REQUIRE(f->type == BoxType::Block);
+    REQUIRE(p.storage.displays[f->style_soa_idx] == style::Display::Block);
+}
+
+TEST_CASE("LTB flex: fallback to block layout in A1",
+    "[ltb][layout][flex]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div id='f'><p>x</p></div>",
+        "#f { display: flex; width: 200px; } "
+        "p { display: block; height: 20px; }");
+    LayoutNode* f = find_by_soa_idx(p.root.get(), 2);
+    LayoutNode* paragraph = find_by_soa_idx(p.root.get(), 3);
+
+    REQUIRE(f != nullptr);
+    REQUIRE(paragraph != nullptr);
+    REQUIRE(f->geometry.width == Approx(200.0f).epsilon(0.001));
+    REQUIRE(paragraph->geometry.y == Approx(0.0f).epsilon(0.001));
+    REQUIRE(paragraph->geometry.width > 0.0f);
+}
+
 TEST_CASE("LTB build: display:none filters whole subtree",
     "[ltb][build][display_none]") {
     ArenaAllocator arena;
