@@ -230,3 +230,43 @@ if(WIN32 AND TARGET ToyBrowserEngine)
         message(WARNING "Could not find OpenSSL DLLs to copy!")
     endif()
 endif()
+
+# --- Headless renderer CLI ---
+add_executable(loom-render apps/render_cli.cpp)
+target_link_libraries(loom-render PRIVATE ToyBrowserCore)
+
+# Копируем Qt-плагины (platforms, tls) рядом с exe — так же,
+# как это уже делается для ToyBrowserEngine.
+if(DEFINED VCPKG_INSTALLED_DIR AND TARGET loom-render)
+    set(_LOOM_QT_PLUGINS_DEBUG
+        "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/qt6/plugins")
+    set(_LOOM_QT_PLUGINS_RELEASE
+        "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/qt6/plugins")
+
+    set(_LOOM_QT_PLUGINS "")
+    if(EXISTS "${_LOOM_QT_PLUGINS_DEBUG}/platforms")
+        set(_LOOM_QT_PLUGINS "${_LOOM_QT_PLUGINS_DEBUG}")
+    elseif(EXISTS "${_LOOM_QT_PLUGINS_RELEASE}/platforms")
+        set(_LOOM_QT_PLUGINS "${_LOOM_QT_PLUGINS_RELEASE}")
+    endif()
+
+    if(_LOOM_QT_PLUGINS)
+        add_custom_command(TARGET loom-render POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${_LOOM_QT_PLUGINS}/platforms"
+                "$<TARGET_FILE_DIR:loom-render>/platforms"
+            COMMENT "Copying Qt platform plugins to loom-render..."
+        )
+    endif()
+endif()
+
+# Копируем Qt runtime DLL (Qt6Core.dll, Qt6Gui.dll, ...) рядом с exe.
+if(WIN32 AND CMAKE_VERSION VERSION_GREATER_EQUAL "3.21")
+    add_custom_command(TARGET loom-render POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:loom-render>
+            $<TARGET_FILE_DIR:loom-render>
+        COMMAND_EXPAND_LISTS
+        COMMENT "Copying runtime DLLs to loom-render directory..."
+    )
+endif()
