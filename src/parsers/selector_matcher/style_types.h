@@ -18,6 +18,13 @@ namespace style {
     enum class BoxSizing : uint8_t { ContentBox, BorderBox };
     enum class TextAlign : uint8_t { Start, End, Left, Right, Center, Justify };
     enum class FontStyle : uint8_t { Normal, Italic, Oblique };
+    enum class TextDecoration : uint8_t {
+        None = 0,
+        Underline = 1,
+        Overline = 2,
+        LineThrough = 4,
+        UnderlineOverline = 3,
+    };
     enum class WhiteSpace : uint8_t { Normal, NoWrap, Pre, PreWrap, PreLine };
     enum class FlexDir : uint8_t { Row, RowReverse, Column, ColumnReverse };
     enum class Justify : uint8_t { Start, End, Center, SpaceBetween, SpaceAround, SpaceEvenly };
@@ -28,6 +35,7 @@ namespace style {
         Display, Position, Float, Overflow, Visibility, BoxSizing, ZIndex, Opacity,
         Color, BackgroundColor,
         FontSize, FontWeight, FontStyle, LineHeight, TextAlign, LetterSpacing, WhiteSpace,
+        TextDecoration,
         Width, Height, MinWidth, MaxWidth, MinHeight, MaxHeight,
         Top, Right, Bottom, Left,
         MarginTop, MarginRight, MarginBottom, MarginLeft,

@@ -725,3 +725,78 @@ split_text_into_words разбивает каждый текстовый фра�
 учитывайте это. Если хотите проверить структуру группировки,
 используйте текст БЕЗ ПРОБЕЛОВ (<div>a<span>b</span>c</div>)
 или проверяйте наличие нужных типов, а не точное количество.
+
+
+## Сборка и тесты на Windows (PowerShell)
+
+Терминал VS Code — PowerShell. Прямой `cmake --build` падает с `C1083`
+(system headers not found) — нет MSVC-окружения.
+
+Многослойные обёртки вида `cmd /c "...vcvars.bat" && cmake ...` в PowerShell
+ломаются с `"C:\Program" не является внутренней командой`. Не используй их.
+
+### Рабочая команда — символ `--%`
+
+`--%` говорит PowerShell: «всё дальше передавай как есть, не интерпретируй».
+Это снимает проблему с кавычками.
+
+**Сборка таргета:**
+```
+cmd /c --% ""C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat" && cmake --build out\build\x64-Debug --target layout_tree_builder_tests"
+```
+
+**Сборка loom-render:**
+```
+cmd /c --% ""C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat" && cmake --build out\build\x64-Debug --target loom-render"
+```
+
+**Сборка всего:**
+```
+cmd /c --% ""C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat" && cmake --build out\build\x64-Debug"
+```
+
+**Тесты:**
+```
+cmd /c --% ""C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat" && ctest --test-dir out\build\x64-Debug --output-on-failure"
+```
+
+**Запуск exe:**
+```
+out\build\x64-Debug\tests\layout_tree_builder_tests.exe
+```
+
+**Запуск loom-render (headless PNG):**
+```powershell
+$env:QT_QPA_PLATFORM="offscreen"
+.\out\build\x64-Debug\loom-render.exe test.html -o out.png
+```
+
+### Если путь к VS другой
+
+Редакция не Community (Professional / Enterprise / BuildTools):
+```
+dir "C:\Program Files\Microsoft Visual Studio\2022\*" /b
+```
+Подставь найденное имя вместо `Community`.
+
+### Что НЕ работает
+
+- ❌ `cmake --build ...` напрямую в PowerShell — C1083
+- ❌ `cmd /c "...vcvars64.bat" && cmake ...` — кавычки ломаются в PS
+- ❌ `cmd /c ""..." && ...""` без `--%` — ломается в PS
+- ❌ VS Code tasks через `run_task` — у Cline нет такого API
+- ❌ Обёртки в одну строку без `--%` — не пытайся угадать экранирование
+
+### При ошибках окружения (C1083 / "C:\Program" / type_traits / memory / stdbool.h)
+
+Не пытайся «исправить» код — код ни при чём. Скопируй команду из раздела
+выше целиком, вместе с `cmd /c --%`. Если не сработало — стоп, сообщи пользователю.
+
+### C4828 warning — игнорируй
+
+Файлы в Windows-1251 дают warning C4828 при `/utf-8`. Не критично, не трогай.
+
+### При ошибках компиляции в коде (C2039, C2065, C2653 и т.п.)
+
+Это уже не окружение, а код. Читай сообщения, смотри номер строки,
+правь код. Если непонятно — стоп, покажи пользователю.

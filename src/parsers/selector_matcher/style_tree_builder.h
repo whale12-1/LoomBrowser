@@ -388,7 +388,7 @@ private:
             {"font-weight",    P::FontWeight},
             {"font-style",     P::FontStyle},
             {"line-height",    P::LineHeight},
-            {"text-align",     P::TextAlign},
+            {"text-decoration", P::TextDecoration},
             {"letter-spacing", P::LetterSpacing},
             {"white-space",    P::WhiteSpace},
             {"width",          P::Width},
@@ -439,7 +439,7 @@ private:
         case Prop::Overflow: storage.overflows[idx] = parse_overflow(v); break;
         case Prop::Visibility: storage.visibilities[idx] = parse_visibility(v); break;
         case Prop::BoxSizing: storage.box_sizings[idx] = parse_box_sizing(v); break;
-        case Prop::TextAlign: storage.text_aligns[idx] = parse_text_align(v); break;
+        case Prop::TextDecoration: storage.text_decorations[idx] = parse_text_decoration(v); break;
         case Prop::FontStyle: storage.font_styles[idx] = parse_font_style(v); break;
         case Prop::WhiteSpace: storage.white_spaces[idx] = parse_white_space(v); break;
         case Prop::FlexDirection: storage.flex_directions[idx] = parse_flex_dir(v); break;
@@ -620,6 +620,21 @@ private:
         if (v == "italic")  return FontStyle::Italic;
         if (v == "oblique") return FontStyle::Oblique;
         return FontStyle::Normal;
+    }
+    static style::TextDecoration parse_text_decoration(const std::string& v) {
+        uint8_t bits = 0;
+        size_t i = 0, n = v.size();
+        while (i < n) {
+            while (i < n && std::isspace((unsigned char)v[i])) ++i;
+            size_t s = i;
+            while (i < n && !std::isspace((unsigned char)v[i])) ++i;
+            const std::string_view tok(v.data() + s, i - s);
+            if (tok == "underline") bits |= 1;
+            else if (tok == "overline") bits |= 2;
+            else if (tok == "line-through") bits |= 4;
+            else if (tok == "none") bits = 0;
+        }
+        return static_cast<style::TextDecoration>(bits);
     }
     static WhiteSpace parse_white_space(const std::string& v) {
         if (v == "nowrap")   return WhiteSpace::NoWrap;

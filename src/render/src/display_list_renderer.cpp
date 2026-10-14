@@ -12,8 +12,8 @@
 
 namespace {
 
-    // Наш DisplayItem::color хранится как 0xRRGGBBAA (CSS-стиль).
-    // Qt ожидает 0xAARRGGBB (QRgb). Конвертируем.
+    // пїЅпїЅпїЅ DisplayItem::color пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ 0xRRGGBBAA (CSS-пїЅпїЅпїЅпїЅпїЅ).
+    // Qt пїЅпїЅпїЅпїЅпїЅпїЅпїЅ 0xAARRGGBB (QRgb). пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
     QRgb css_to_qt(uint32_t css_rgba) {
         const uint8_t r = static_cast<uint8_t>((css_rgba >> 24) & 0xFF);
         const uint8_t g = static_cast<uint8_t>((css_rgba >> 16) & 0xFF);
@@ -39,7 +39,7 @@ QImage DisplayListRenderer::render(const DisplayList& list,
         switch (item.type) {
         case DisplayItemType::Rect: {
             const QColor c = QColor::fromRgba(css_to_qt(item.color));
-            if (c.alpha() == 0) break;   // полностью прозрачный — пропускаем
+            if (c.alpha() == 0) break;   // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
             p.fillRect(QRectF(item.x, item.y, item.width, item.height), c);
             break;
         }
@@ -52,17 +52,30 @@ QImage DisplayListRenderer::render(const DisplayList& list,
             p.setFont(f);
             p.setPen(QColor::fromRgba(css_to_qt(item.color)));
 
-            // drawText(QPointF) использует baseline. Наш geometry.y — верх строки.
-            // Смещаем вниз на ascent, чтобы baseline встал правильно.
+            // drawText(QPointF) пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ baseline. пїЅпїЅпїЅ geometry.y пїЅ пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ.
+            // пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅ ascent, пїЅпїЅпїЅпїЅпїЅ baseline пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
             QFontMetricsF fm(f);
             const QString text = QString::fromUtf8(
                 item.text.data(), static_cast<int>(item.text.size()));
-            p.drawText(QPointF(item.x, item.y + fm.ascent()), text);
+            const float baseline_y = item.y + fm.ascent();
+            p.drawText(QPointF(item.x, baseline_y), text);
+            const float underline_y = baseline_y + fm.underlinePos();
+            const float overline_y = item.y;
+            const float line_through_y = item.y + item.height * 0.5f;
+            if (item.underline)
+                p.drawLine(QPointF(item.x, underline_y),
+                    QPointF(item.x + item.width, underline_y));
+            if (item.overline)
+                p.drawLine(QPointF(item.x, overline_y),
+                    QPointF(item.x + item.width, overline_y));
+            if (item.line_through)
+                p.drawLine(QPointF(item.x, line_through_y),
+                    QPointF(item.x + item.width, line_through_y));
             break;
         }
         }
     }
 
-    p.end();   // обязательно: отпускает QImage до save()
+    p.end();   // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ: пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ QImage пїЅпїЅ save()
     return img;
 }

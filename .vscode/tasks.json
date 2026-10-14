@@ -1,0 +1,67 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "CMake: Configure",
+            "type": "cmake",
+            "command": "configure",
+            "preset": "${command:cmake.activeConfigurePresetName}",
+            "problemMatcher": [],
+            "detail": "Запуск конфигурации CMake с активным пресетом."
+        },
+        {
+            "label": "CMake: Build (extension)",
+            "type": "cmake",
+            "command": "build",
+            "preset": "${command:cmake.activeBuildPresetName}",
+            "problemMatcher": ["$msCompile"],
+            "detail": "Сборка через CMake Tools (требует корректного окружения MSVC)."
+        },
+        {
+            "label": "CMake: Build (with vcvars)",
+            "type": "shell",
+            "command": "cmd",
+            "args": [
+                "/c",
+                "\"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Auxiliary\\Build\\vcvars64.bat\" && cmake --build out\\build\\x64-Debug --target ${input:cmakeTarget}"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": ["$msCompile"],
+            "detail": "Сборка с явной загрузкой MSVC-окружения. Работает независимо от профиля терминала."
+        },
+        {
+            "label": "CMake: Run Tests",
+            "type": "cmake",
+            "command": "test",
+            "preset": "${command:cmake.activeTestPresetName}",
+            "problemMatcher": [],
+            "group": {
+                "kind": "test",
+                "isDefault": true
+            },
+            "detail": "Запуск тестов через CTest."
+        },
+        {
+            "label": "CMake: Run Tests (with vcvars)",
+            "type": "shell",
+            "command": "cmd",
+            "args": [
+                "/c",
+                "\"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Auxiliary\\Build\\vcvars64.bat\" && ctest --test-dir out\\build\\x64-Debug --output-on-failure"
+            ],
+            "problemMatcher": [],
+            "detail": "Запуск всех тестов с явной загрузкой MSVC-окружения."
+        }
+    ],
+    "inputs": [
+        {
+            "id": "cmakeTarget",
+            "type": "promptString",
+            "description": "Какой target собрать?",
+            "default": "layout_tree_builder_tests"
+        }
+    ]
+}

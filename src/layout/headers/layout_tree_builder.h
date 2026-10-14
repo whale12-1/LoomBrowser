@@ -73,20 +73,132 @@ public:
         if (!root) return;
         const float root_fs = storage.font_sizes.empty() ? 16.0f : storage.font_sizes[0];
 
-        // 1. Flow-раскладка. Absolute-дети пропускаются, их static position
-        //    сохраняется в layout_block_container.
+        // 1. Flow-раскладка.
         layout_node(root, viewport.width, viewport, storage, root_fs, metrics);
 
-        // 2. Пост-проход: сохранить flow_x/flow_y для не-absolute узлов,
-        //    применить relative-сдвиг. Absolute-узлы не трогаем — их
-        //    flow-координаты уже сохранены в родителе.
+        // 2. Пост-проход: сохранить flow_x/flow_y и применить relative.
         apply_position_offsets(root, viewport, storage, root_fs);
 
-        // 3. Раскладка absolute-потомков относительно их содержащего блока.
+        // 3. Раскладка absolute-потомков.
         layout_absolute_descendants(root, viewport, storage, root_fs, metrics);
     }
 
 private:
+    struct IntrinsicSize {
+        float content_width = 0.0f;
+        float content_height = 0.0f;
+    };
+
+    // Измеряет max-content размер узла без изменения его geometry.
+    static IntrinsicSize measure_intrinsic(const LayoutNode* node,
+        const StyleStorageSoA& storage,
+        float root_fs,
+        const TextMetrics& tm)
+    {
+        if (!node) return {};
+
+        const uint32_t si = effective_style_idx(node);
+        const float fs = storage.font_sizes[si];
+        const bool bold = storage.font_weights[si] >= 700;
+        const Viewport vp{};
+        const auto line_height = [&]() {
+            if (storage.line_heights[si] == 0.0f && tm.hasHeight())
+                return tm.line_spacing(fs, bold);
+            return style::resolve_line_height(storage, si);
+            };
+        const auto box_extra = [&]() {
+            return IntrinsicSize{
+                resolve_px(storage.padding_left[si], fs, root_fs, vp, 0.0f)
+                    + resolve_px(storage.padding_right[si], fs, root_fs, vp, 0.0f)
+                    + resolve_px(storage.border_left_width[si], fs, root_fs, vp, 0.0f)
+                    + resolve_px(storage.border_right_width[si], fs, root_fs, vp, 0.0f),
+                resolve_px(storage.padding_top[si], fs, root_fs, vp, 0.0f)
+                    + resolve_px(storage.padding_bottom[si], fs, root_fs, vp, 0.0f)
+                    + resolve_px(storage.border_top_width[si], fs, root_fs, vp, 0.0f)
+                    + resolve_px(storage.border_bottom_width[si], fs, root_fs, vp, 0.0f)
+            };
+            };
+
+        if (node->type == BoxType::Text) {
+            const float width = tm.hasWidth()
+                ? tm.measure_width(node->text_content, fs, bold)
+                : node->text_content.size() * std::max(1.0f, fs * 0.55f);
+            return { width, line_height() };
+        }
+
+        const bool inline_flow = node->type == BoxType::Inline
+            || node->type == BoxType::AnonymousBlock;
+        if (inline_flow) {
+            IntrinsicSize result;
+            for (const auto& child : node->children) {
+                if (child->style_soa_idx != UINT32_MAX
+                    && storage.positions[child->style_soa_idx] == style::Position::Absolute)
+                    continue;
+                const IntrinsicSize child_size = measure_intrinsic(child.get(), storage, root_fs, tm);
+                result.content_width += child_size.content_width;
+                result.content_height = std::max(result.content_height, child_size.content_height);
+            }
+            const IntrinsicSize extra = box_extra();
+            result.content_width += extra.content_width;
+            result.content_height += extra.content_height;
+            return result;
+        }
+
+        IntrinsicSize result;
+        float inline_group_width = 0.0f;
+        float inline_group_height = 0.0f;
+        bool has_inline_group = false;
+        for (const auto& child : node->children) {
+            if (child->style_soa_idx != UINT32_MAX
+                && storage.positions[child->style_soa_idx] == style::Position::Absolute)
+                continue;
+            const IntrinsicSize child_size = measure_intrinsic(child.get(), storage, root_fs, tm);
+            if (child->type == BoxType::Block) {
+                result.content_width = std::max(result.content_width, child_size.content_width);
+                result.content_height += child_size.content_height;
+            }
+            else {
+                has_inline_group = true;
+                inline_group_width += child_size.content_width;
+                inline_group_height = std::max(inline_group_height, child_size.content_height);
+            }
+        }
+        if (has_inline_group) {
+            result.content_width = std::max(result.content_width, inline_group_width);
+            result.content_height += inline_group_height;
+        }
+        const IntrinsicSize extra = box_extra();
+        result.content_width += extra.content_width;
+        result.content_height += extra.content_height;
+        return result;
+    }
+
+    // Возвращает content base main size; -1.0f означает auto.
+    static float resolve_flex_basis(LayoutNode* item,
+        const StyleStorageSoA& storage,
+        float container_content_width,
+        float root_fs,
+        const TextMetrics& tm)
+    {
+        if (item->style_soa_idx == UINT32_MAX)
+            return measure_intrinsic(item, storage, root_fs, tm).content_width;
+
+        const uint32_t si = item->style_soa_idx;
+        const float fs = storage.font_sizes[si];
+        const style::Length& fb = storage.flex_bases[si];
+        const style::Length& w = storage.widths[si];
+        const Viewport vp{};
+        const auto resolve = [&](const style::Length& length) {
+            return length.unit == Unit::Percent
+                ? length.value * 0.01f * container_content_width
+                : resolve_px(length, fs, root_fs, vp, container_content_width);
+            };
+
+        if (!fb.is_auto() && !fb.is_none()) return resolve(fb);
+        if (!w.is_auto() && !w.is_none()) return resolve(w);
+        return measure_intrinsic(item, storage, root_fs, tm).content_width;
+    }
+
     // =================================================================
     //  Phase 1 — построение
     // =================================================================
@@ -136,15 +248,9 @@ private:
 
     // Разбивает текстовую ноду на атомарные Text-узлы: слова и одиночные пробелы.
     // Подряд идущие пробелы схлопываются в один (white-space: normal).
-    //
-    //   "hello world"  →  [Text "hello"] [Text " "] [Text "world"]
-    //   "a   b"        →  [Text "a"]     [Text " "] [Text "b"]
-    //
-    // IFC родитель потом укладывает эти атомы по строкам.
     static void split_text_into_words(std::string_view text, LayoutNode* parent) {
         size_t i = 0, n = text.size();
         while (i < n) {
-            // Проглатываем пробелы — создаём один узел пробела
             size_t ws = i;
             while (i < n && std::isspace((unsigned char)text[i])) ++i;
             if (i > ws) {
@@ -155,7 +261,6 @@ private:
                 parent->add_child(std::move(sp));
             }
 
-            // Слово — до следующего пробела
             size_t ws2 = i;
             while (i < n && !std::isspace((unsigned char)text[i])) ++i;
             if (i > ws2) {
@@ -202,10 +307,6 @@ private:
         return BoxType::Block;
     }
 
-    // Все подряд идущие inline-дети оборачиваются в AnonymousBlock.
-    // Обёртка создаётся, даже если block-детей нет вовсе — иначе
-    // текст в блоке не получит inline formatting context и уложится
-    // вертикально по одной ноде на строку.
     static void wrap_anonymous_blocks(LayoutNode* node,
         const StyleStorageSoA& storage) {
         if (!node) return;
@@ -286,10 +387,6 @@ private:
 
     // =================================================================
     //  Phase 1: индекс containing blocks для absolute
-    //
-    //  Для каждого absolute-узла находим ближайшего предка с position
-    //  relative или absolute и регистрируем узел в его absolute_children.
-    //  Если positioned-предка нет — CB становится root (fallback viewport).
     // =================================================================
 
     static void build_absolute_index(LayoutNode* root,
@@ -340,6 +437,23 @@ private:
         return storage.displays[node->style_soa_idx] == style::Display::Flex;
     }
 
+    // =================================================================
+    //  Flex-контейнер
+    //
+    //  Реализовано в 5 проходов:
+    //    1) Собрать не-absolute детей и их базовые размеры.
+    //    2) Распределить свободное место через flex-grow / flex-shrink.
+    //    3) Разложить каждого ребёнка с финальной шириной.
+    //    4) Позиционирование по главной оси (justify-content).
+    //    5) Выравнивание по поперечной оси (align-items).
+    //
+    //  NOTE: предполагается, что в StyleStorageSoA есть поля
+    //        flex_grows, flex_shrinks, justify_contents, align_items.
+    //        Если их нет — добавьте или замените имена на свои.
+    // =================================================================
+        // =================================================================
+    //  Flex-контейнер
+    // =================================================================
     static void layout_flex_container(LayoutNode* node,
         float parent_width,
         const Viewport& vp,
@@ -350,33 +464,43 @@ private:
         auto& g = node->geometry;
         resolve_box_model(node, storage, vp, parent_width, root_fs);
 
+        const uint32_t node_si = (node->style_soa_idx != UINT32_MAX)
+            ? node->style_soa_idx
+            : effective_style_idx(node);
+
+        // -------- content_width контейнера --------
         const float h_extra = g.margin_left + g.margin_right
             + g.padding_left + g.padding_right
             + g.border_left + g.border_right;
         float content_width = std::max(0.0f, parent_width - h_extra);
 
+        // FIX: определяем, auto ли ширина контейнера — от этого зависит
+        // shrink-to-fit ниже. Тесты (и inline-flex по спеке) ожидают,
+        // что auto-width flex-контейнер сжимается по содержимому.
+        bool container_width_auto = true;
+
         if (node->style_soa_idx != UINT32_MAX) {
-            const uint32_t si = node->style_soa_idx;
-            const float fs = storage.font_sizes[si];
-            const bool border_box = (storage.box_sizings[si] == BoxSizing::BorderBox);
+            const float fs = storage.font_sizes[node_si];
+            const bool border_box = (storage.box_sizings[node_si] == BoxSizing::BorderBox);
             const float pb_h = g.padding_left + g.padding_right
                 + g.border_left + g.border_right;
 
-            const style::Length& w = storage.widths[si];
+            const style::Length& w = storage.widths[node_si];
             if (!w.is_auto() && !w.is_none()) {
                 float spec = resolve_px(w, fs, root_fs, vp, parent_width);
                 if (border_box) spec -= pb_h;
                 content_width = std::max(0.0f, spec);
+                container_width_auto = false;
             }
 
-            const style::Length& maxw = storage.max_widths[si];
+            const style::Length& maxw = storage.max_widths[node_si];
             if (!maxw.is_none()) {
                 float mw = resolve_px(maxw, fs, root_fs, vp, parent_width);
                 if (border_box) mw -= pb_h;
                 if (mw > 0.0f) content_width = std::min(content_width, mw);
             }
 
-            const style::Length& minw = storage.min_widths[si];
+            const style::Length& minw = storage.min_widths[node_si];
             if (!minw.is_none()) {
                 float mw = resolve_px(minw, fs, root_fs, vp, parent_width);
                 if (border_box) mw -= pb_h;
@@ -386,69 +510,233 @@ private:
 
         const float inner_x = g.border_left + g.padding_left;
         const float inner_y = g.border_top + g.padding_top;
-        float x_cursor = 0.0f;
-        float max_outer_h = 0.0f;
+
+        // -------- Pass 1: собрать items и базовые размеры --------
+        struct FlexItem {
+            LayoutNode* node = nullptr;
+            float base_main = 0.0f;
+            float outer_main = 0.0f;
+            float cross_outer = 0.0f;
+            float grow = 0.0f;
+            float shrink = 1.0f;
+        };
+
+        std::vector<FlexItem> items;
+        items.reserve(node->children.size());
 
         for (auto& child : node->children) {
             if (child->style_soa_idx != UINT32_MAX
                 && storage.positions[child->style_soa_idx] == style::Position::Absolute) {
-                child->geometry.flow_x = inner_x + x_cursor;
+                child->geometry.flow_x = inner_x;
                 child->geometry.flow_y = inner_y;
                 continue;
             }
 
             resolve_box_model(child.get(), storage, vp, content_width, root_fs);
 
-            float child_main = 0.0f;
+            const float base = resolve_flex_basis(
+                child.get(), storage, content_width, root_fs, tm);
+
+            const float pb_h = child->geometry.padding_left
+                + child->geometry.padding_right
+                + child->geometry.border_left
+                + child->geometry.border_right;
+
+            float outer_main = base;
+            float grow = 0.0f;
+            float shrink = 1.0f;
             if (child->style_soa_idx != UINT32_MAX) {
-                const uint32_t si = child->style_soa_idx;
-                const float fs = storage.font_sizes[si];
-                const style::Length& w = storage.widths[si];
-                const bool border_box = (storage.box_sizings[si] == BoxSizing::BorderBox);
-                if (!w.is_auto() && !w.is_none()) {
-                    float spec = resolve_px(w, fs, root_fs, vp, content_width);
-                    if (border_box) {
-                        spec -= child->geometry.padding_left + child->geometry.padding_right
-                            + child->geometry.border_left + child->geometry.border_right;
-                    }
-                    child_main = std::max(0.0f, spec);
-                }
+                const bool border_box =
+                    storage.box_sizings[child->style_soa_idx] == BoxSizing::BorderBox;
+                if (!border_box) outer_main = base + pb_h;
+                grow = storage.flex_grows[child->style_soa_idx];
+                shrink = storage.flex_shrinks[child->style_soa_idx];
             }
 
-            layout_node(child.get(), child_main, vp, storage, root_fs, tm);
-            child->geometry.x = inner_x + x_cursor + child->geometry.margin_left;
-            child->geometry.y = inner_y + child->geometry.margin_top;
-
-            const float child_outer_h = child->geometry.margin_top
-                + child->geometry.height + child->geometry.margin_bottom;
-            max_outer_h = std::max(max_outer_h, child_outer_h);
-            x_cursor += child->geometry.margin_left + child->geometry.width
-                + child->geometry.margin_right;
+            FlexItem item;
+            item.node = child.get();
+            item.base_main = base;
+            item.outer_main = outer_main;
+            item.cross_outer = 0.0f;
+            item.grow = grow;
+            item.shrink = shrink;
+            items.push_back(item);
         }
 
-        float content_height = max_outer_h;
+        // -------- Pass 2: free space и распределение --------
+        float total_outer = 0.0f;
+        float total_grow = 0.0f;
+        float total_shrink_weight = 0.0f;
+        for (const auto& it : items) {
+            total_outer += it.outer_main
+                + it.node->geometry.margin_left
+                + it.node->geometry.margin_right;
+            total_grow += it.grow;
+            total_shrink_weight += it.shrink * it.base_main;
+        }
+
+        // FIX: при auto-ширине контейнера "бюджет" = сумма базовых размеров
+        // (shrink-to-fit). Тогда free_space = 0, grow-распределение не
+        // срабатывает, а justify-content тоже не сдвигает (нет свободного
+        // места). Иначе бюджет — явная content_width.
+        const float budget = container_width_auto ? total_outer : content_width;
+        const float free_space = budget - total_outer;
+
+        if (free_space > 0.0f && total_grow > 0.0f) {
+            for (auto& it : items) {
+                if (it.grow <= 0.0f) continue;
+                it.outer_main += free_space * (it.grow / total_grow);
+            }
+        }
+        else if (free_space < 0.0f && total_shrink_weight > 0.0f) {
+            const float deficit = -free_space;
+            for (auto& it : items) {
+                if (it.shrink <= 0.0f) continue;
+                const float weight = it.shrink * it.base_main;
+                const float share = deficit * (weight / total_shrink_weight);
+                it.outer_main = std::max(0.0f, it.outer_main - share);
+            }
+        }
+
+        // -------- Pass 3: layout каждого item с финальной шириной --------
+        float max_cross_outer = 0.0f;
+        for (auto& it : items) {
+            const float pb_h = it.node->geometry.padding_left
+                + it.node->geometry.padding_right
+                + it.node->geometry.border_left
+                + it.node->geometry.border_right;
+            const float override_content_w = std::max(0.0f, it.outer_main - pb_h);
+
+            layout_node(it.node, content_width, vp, storage, root_fs, tm,
+                override_content_w);
+
+            it.cross_outer = it.node->geometry.height
+                + it.node->geometry.margin_top
+                + it.node->geometry.margin_bottom;
+            max_cross_outer = std::max(max_cross_outer, it.cross_outer);
+        }
+
+        // FIX: считаем реальный использованный main-размер и (при auto)
+        // подрезаем content_width контейнера до него.
+        float used_main = 0.0f;
+        for (const auto& it : items) {
+            used_main += it.node->geometry.width
+                + it.node->geometry.margin_left
+                + it.node->geometry.margin_right;
+        }
+
+        if (container_width_auto) {
+            content_width = used_main;
+
+            // Переприменяем min/max к финальному значению.
+            if (node->style_soa_idx != UINT32_MAX) {
+                const float fs = storage.font_sizes[node_si];
+                const bool border_box = (storage.box_sizings[node_si] == BoxSizing::BorderBox);
+                const float pb_h = g.padding_left + g.padding_right
+                    + g.border_left + g.border_right;
+
+                const style::Length& maxw = storage.max_widths[node_si];
+                if (!maxw.is_none()) {
+                    float mw = resolve_px(maxw, fs, root_fs, vp, parent_width);
+                    if (border_box) mw -= pb_h;
+                    if (mw > 0.0f) content_width = std::min(content_width, mw);
+                }
+
+                const style::Length& minw = storage.min_widths[node_si];
+                if (!minw.is_none()) {
+                    float mw = resolve_px(minw, fs, root_fs, vp, parent_width);
+                    if (border_box) mw -= pb_h;
+                    if (mw > 0.0f) content_width = std::max(content_width, mw);
+                }
+            }
+        }
+
+        // -------- Pass 4: justify-content (главная ось) --------
+        const float remaining = content_width - used_main;
+        float main_offset = 0.0f;
+        float item_gap = 0.0f;
+
+        style::Justify justify = style::Justify::Start;
         if (node->style_soa_idx != UINT32_MAX) {
-            const uint32_t si = node->style_soa_idx;
-            const float fs = storage.font_sizes[si];
-            const bool border_box = (storage.box_sizings[si] == BoxSizing::BorderBox);
+            justify = storage.justify_contents[node->style_soa_idx];
+        }
+
+        if (remaining > 0.0f && !items.empty()) {
+            switch (justify) {
+            case style::Justify::End:
+                main_offset = remaining;
+                break;
+            case style::Justify::Center:
+                main_offset = remaining * 0.5f;
+                break;
+            case style::Justify::SpaceBetween:
+                if (items.size() > 1) item_gap = remaining / (items.size() - 1);
+                break;
+            case style::Justify::SpaceAround:
+                item_gap = remaining / items.size();
+                main_offset = item_gap * 0.5f;
+                break;
+            case style::Justify::SpaceEvenly:
+                item_gap = remaining / (items.size() + 1);
+                main_offset = item_gap;
+                break;
+            case style::Justify::Start:
+            default:
+                break;
+            }
+        }
+
+        // -------- Pass 5: align-items (поперечная ось) + позиции --------
+        style::AlignItems align = style::AlignItems::FlexStart;
+        if (node->style_soa_idx != UINT32_MAX) {
+            align = storage.align_items[node->style_soa_idx];
+        }
+
+        float x_cursor = main_offset;
+        for (auto& it : items) {
+            LayoutNode* child = it.node;
+
+            float cross_offset = 0.0f;
+            if (align == style::AlignItems::Center) {
+                cross_offset = (max_cross_outer - it.cross_outer) * 0.5f;
+            }
+            else if (align == style::AlignItems::FlexEnd) {
+                cross_offset = max_cross_outer - it.cross_outer;
+            }
+
+            child->geometry.x = inner_x + x_cursor + child->geometry.margin_left;
+            child->geometry.y = inner_y + cross_offset + child->geometry.margin_top;
+
+            x_cursor += child->geometry.margin_left
+                + child->geometry.width
+                + child->geometry.margin_right
+                + item_gap;
+        }
+
+        // -------- content_height контейнера --------
+        float content_height = max_cross_outer;
+
+        if (node->style_soa_idx != UINT32_MAX) {
+            const float fs = storage.font_sizes[node_si];
+            const bool border_box = (storage.box_sizings[node_si] == BoxSizing::BorderBox);
             const float pb_v = g.padding_top + g.padding_bottom
                 + g.border_top + g.border_bottom;
 
-            const style::Length& h = storage.heights[si];
+            const style::Length& h = storage.heights[node_si];
             if (!h.is_auto() && !h.is_none()) {
                 float spec = resolve_px(h, fs, root_fs, vp, parent_width);
                 if (border_box) spec -= pb_v;
                 content_height = std::max(0.0f, spec);
             }
 
-            const style::Length& maxh = storage.max_heights[si];
+            const style::Length& maxh = storage.max_heights[node_si];
             if (!maxh.is_none()) {
                 float mh = resolve_px(maxh, fs, root_fs, vp, parent_width);
                 if (border_box) mh -= pb_v;
                 if (mh > 0.0f) content_height = std::min(content_height, mh);
             }
 
-            const style::Length& minh = storage.min_heights[si];
+            const style::Length& minh = storage.min_heights[node_si];
             if (!minh.is_none()) {
                 float mh = resolve_px(minh, fs, root_fs, vp, parent_width);
                 if (border_box) mh -= pb_v;
@@ -456,17 +744,13 @@ private:
             }
         }
 
-        if (node->style_soa_idx == UINT32_MAX
-            || storage.widths[node->style_soa_idx].is_auto()
-            || storage.widths[node->style_soa_idx].is_none()) {
-            content_width = std::max(0.0f, x_cursor);
-        }
-
         g.width = g.border_left + g.padding_left + content_width
             + g.padding_right + g.border_right;
         g.height = g.border_top + g.padding_top + content_height
             + g.padding_bottom + g.border_bottom;
     }
+
+
     // Flex-контейнер — новый путь в диспетчере.
     // Не добавляем BoxType::Flex: flex — это режим layout,
     // а не тип бокса. Внешне контейнер остаётся Block.
@@ -474,7 +758,8 @@ private:
         const Viewport& vp,
         const StyleStorageSoA& storage,
         float root_fs,
-        const TextMetrics& tm)
+        const TextMetrics& tm,
+        float override_content_width = -1.0f)
     {
         if (is_flex_container(node, storage)) {
             layout_flex_container(node, parent_width, vp, storage, root_fs, tm);
@@ -487,7 +772,8 @@ private:
             node->geometry.width = parent_width;
             break;
         case BoxType::Block:
-            layout_block_container(node, parent_width, vp, storage, root_fs, tm);
+            layout_block_container(node, parent_width, vp, storage, root_fs, tm,
+                override_content_width);
             break;
         case BoxType::Inline:
             layout_inline(node, parent_width, vp, storage, root_fs, tm);
@@ -557,7 +843,6 @@ private:
         const float right = resolve_px(
             right_inset, fs, root_fs, vp, node->geometry.width);
 
-        // Если оба inset на оси заданы — первая версия использует left/top.
         const float offset_x = !left_inset.is_auto() ? left
             : (!right_inset.is_auto() ? -right : 0.0f);
         const float offset_y = !top_inset.is_auto() ? top
@@ -569,10 +854,6 @@ private:
 
     // =================================================================
     //  Пост-проход: сохранить flow-позицию и применить relative
-    //
-    //  Для absolute-узлов flow_x/flow_y УЖЕ сохранены родителем
-    //  в layout_block_container. Не перезаписываем их здесь —
-    //  их geometry.x/y пока не посчитаны.
     // =================================================================
 
     static void apply_position_offsets(LayoutNode* node, const Viewport& vp,
@@ -603,8 +884,6 @@ private:
     //  Absolute positioning
     // =================================================================
 
-    // Рекурсивный обход: для каждого узла разложить его absolute_children
-    // относительно его content-бокса, затем спуститься к детям.
     static void layout_absolute_descendants(LayoutNode* cb, const Viewport& vp,
         const StyleStorageSoA& storage, float root_fs, const TextMetrics& tm)
     {
@@ -621,7 +900,6 @@ private:
             if (!child || child->style_soa_idx == UINT32_MAX) continue;
             layout_absolute(child, cb_content_width, cb_content_height,
                 vp, storage, root_fs, tm);
-            // У absolute-узла могут быть свои absolute-потомки.
             layout_absolute_descendants(child, vp, storage, root_fs, tm);
         }
 
@@ -630,7 +908,6 @@ private:
         }
     }
 
-    // Раскладка одного absolute-узла относительно content-бокса его CB.
     static void layout_absolute(LayoutNode* node, float cb_content_width,
         float cb_content_height, const Viewport& vp,
         const StyleStorageSoA& storage, float root_fs, const TextMetrics& tm)
@@ -664,7 +941,6 @@ private:
         const bool width_auto = width_spec.is_auto() || width_spec.is_none();
         const bool height_auto = height_spec.is_auto() || height_spec.is_none();
 
-        // -------- width (упрощённая матрица CSS 2.1 §10.3.7) --------
         float computed_width;
         if (!width_auto) {
             computed_width = resolve_px(width_spec, fs, root_fs, vp, cb_content_width);
@@ -682,24 +958,17 @@ private:
             computed_width = cb_content_width;
         }
 
-        // -------- height --------
-        float computed_height = node->geometry.height;   // пока 0, если не auto
+        float computed_height = node->geometry.height;
+        bool height_from_constraints = false;
         if (!height_auto) {
             computed_height = resolve_px(height_spec, fs, root_fs, vp, cb_content_width);
+            height_from_constraints = true;
         }
         else if (has_top && has_bottom && cb_content_height >= 0.0f) {
             computed_height = std::max(0.0f, cb_content_height - top - bottom);
+            height_from_constraints = true;
         }
-        else if (has_top && cb_content_height >= 0.0f) {
-            computed_height = std::max(0.0f, cb_content_height - top);
-        }
-        else if (has_bottom && cb_content_height >= 0.0f) {
-            computed_height = std::max(0.0f, cb_content_height - bottom);
-        }
-        // Если height auto и нет top/bottom, оставляем как посчитает
-        // layout_block_container по содержимому.
 
-        // -------- x --------
         float x;
         if (has_left) {
             x = left;
@@ -711,7 +980,6 @@ private:
             x = node->geometry.flow_x;
         }
 
-        // -------- y --------
         float y;
         if (has_top) {
             y = top;
@@ -723,14 +991,12 @@ private:
             y = node->geometry.flow_y;
         }
 
-        // Разложить содержимое absolute-узла как обычный блок.
         layout_block_container(node, computed_width, vp, storage, root_fs, tm);
 
-        // Установить итоговые координаты и размеры.
         node->geometry.x = x;
         node->geometry.y = y;
         node->geometry.width = computed_width;
-        if (!height_auto) {
+        if (height_from_constraints) {
             node->geometry.height = computed_height;
         }
     }
@@ -764,21 +1030,20 @@ private:
         g.border_left = resolve_px(storage.border_left_width[si], fs, root_fs, vp, parent_width);
     }
 
-    // =================================================================
-    //  Inline Formatting Context
+    static bool is_br(const LayoutNode* node, const StyleStorageSoA& storage) {
+        if (!node || node->style_soa_idx == UINT32_MAX) return false;
+        const DOMNode* dom = storage.dom_nodes[node->style_soa_idx];
+        if (!dom) return false;
+        const std::string_view tag(dom->tag_name.data(), dom->tag_name.size());
+        return tag == "br";
+    }
+
     //
     //  Раскладывает inline-level детей по строкам слева направо с переносом.
-    //  Используется:
-    //    * для AnonymousBlock — без box model (padding/border = 0);
-    //    * для <span> (BoxType::Inline) — с box model, после resolve_box_model.
     //
-    //  Дети позиционируются относительно content-области (внутри padding/border).
-    //  В конце записывает intrinsic size в node->geometry.width/height.
-    //
-    //  Переносы:
-    //    * Пробел в начале строки схлопывается (width не учитывается).
-    //    * Если слово не влезает — переносится на новую строку целиком.
-    //    * Одиночное слово, которое шире avail, вылезет за границы (по CSS).
+    //  FIX #1: пробел в начале строки (в т.ч. после переноса) схлопывается.
+    //          Раньше он ставился в позицию inner_x, но line_x оставался
+    //          нулём, и следующее слово ложилось ровно на ту же позицию.
     // =================================================================
     static void layout_ifc(LayoutNode* node, float parent_width,
         const Viewport& vp,
@@ -804,6 +1069,19 @@ private:
         for (auto& child : node->children) {
             layout_node(child.get(), avail, vp, storage, root_fs, tm);
 
+            if (is_br(child.get(), storage)) {
+                max_line_width = std::max(max_line_width, line_x);
+                const uint32_t si = effective_style_idx(node);
+                line_y += style::resolve_line_height(storage, si);
+                line_x = 0.0f;
+                line_height = 0.0f;
+                child->geometry.x = inner_x;
+                child->geometry.y = inner_y + line_y;
+                child->geometry.width = 0.0f;
+                child->geometry.height = 0.0f;
+                continue;
+            }
+
             const float w = child->geometry.width
                 + child->geometry.margin_left
                 + child->geometry.margin_right;
@@ -814,11 +1092,13 @@ private:
             const bool is_space = (child->type == BoxType::Text
                 && child->text_content == " ");
 
-            // Пробел в начале строки — схлопываем: ставим в текущую
-            // позицию, но не увеличиваем курсор.
+            // Пробел в начале строки схлопывается: не отрисовываем,
+            // курсор не двигаем. Ширину обнуляем, чтобы рендерер
+            // не нарисовал лишний прямоугольник.
             if (is_space && line_x == 0) {
                 child->geometry.x = inner_x;
                 child->geometry.y = inner_y + line_y;
+                child->geometry.width = 0.0f;
                 continue;
             }
 
@@ -829,9 +1109,11 @@ private:
                 line_x = 0;
                 line_height = 0;
 
+                // Пробел, вызвавший перенос, схлопывается на новой строке.
                 if (is_space) {
                     child->geometry.x = inner_x;
                     child->geometry.y = inner_y + line_y;
+                    child->geometry.width = 0.0f;
                     continue;
                 }
             }
@@ -843,7 +1125,6 @@ private:
             line_height = std::max(line_height, h);
         }
 
-        // Закрываем последнюю строку.
         max_line_width = std::max(max_line_width, line_x);
         line_y += line_height;
 
@@ -855,12 +1136,18 @@ private:
 
     // =================================================================
     //  Block container — обычный BFC layout
+    //
+    //  FIX #2 (часть): новый параметр override_content_width. Если >= 0,
+    //  он жёстко задаёт content-box ширину, минуя собственную
+    //  `width` узла. Это нужно, чтобы flex-распределение не затиралось
+    //  явной шириной ребёнка.
     // =================================================================
     static void layout_block_container(LayoutNode* node, float parent_width,
         const Viewport& vp,
         const StyleStorageSoA& storage,
         float root_fs,
-        const TextMetrics& tm)
+        const TextMetrics& tm,
+        float override_content_width = -1.0f)
     {
         auto& g = node->geometry;
         const bool is_real = (node->type == BoxType::Block);
@@ -872,39 +1159,49 @@ private:
             + g.border_left + g.border_right;
 
         // -------- content_width --------
-        float content_width = std::max(0.0f, parent_width - h_extra);
+        float content_width;
 
-        if (is_real) {
-            const uint32_t si = node->style_soa_idx;
-            const float fs = storage.font_sizes[si];
-            const bool border_box = (storage.box_sizings[si] == BoxSizing::BorderBox);
-            const float pb_h = g.padding_left + g.padding_right
-                + g.border_left + g.border_right;
+        if (override_content_width >= 0.0f) {
+            // Flex override: жёстко фиксируем content-box.
+            content_width = override_content_width;
+        }
+        else {
+            content_width = std::max(0.0f, parent_width - h_extra);
 
-            const style::Length& w = storage.widths[si];
-            if (!w.is_auto() && !w.is_none()) {
-                float spec = resolve_px(w, fs, root_fs, vp, parent_width);
-                if (border_box) spec -= pb_h;
-                content_width = std::max(0.0f, spec);
-            }
+            if (is_real) {
+                const uint32_t si = node->style_soa_idx;
+                const float fs = storage.font_sizes[si];
+                const bool border_box = (storage.box_sizings[si] == BoxSizing::BorderBox);
+                const float pb_h = g.padding_left + g.padding_right
+                    + g.border_left + g.border_right;
 
-            const style::Length& maxw = storage.max_widths[si];
-            if (!maxw.is_none()) {
-                float mw = resolve_px(maxw, fs, root_fs, vp, parent_width);
-                if (border_box) mw -= pb_h;
-                if (mw > 0.0f) content_width = std::min(content_width, mw);
-            }
+                const style::Length& w = storage.widths[si];
+                if (!w.is_auto() && !w.is_none()) {
+                    float spec = resolve_px(w, fs, root_fs, vp, parent_width);
+                    if (border_box) spec -= pb_h;
+                    content_width = std::max(0.0f, spec);
+                }
 
-            const style::Length& minw = storage.min_widths[si];
-            if (!minw.is_none()) {
-                float mw = resolve_px(minw, fs, root_fs, vp, parent_width);
-                if (border_box) mw -= pb_h;
-                if (mw > 0.0f) content_width = std::max(content_width, mw);
+                const style::Length& maxw = storage.max_widths[si];
+                if (!maxw.is_none()) {
+                    float mw = resolve_px(maxw, fs, root_fs, vp, parent_width);
+                    if (border_box) mw -= pb_h;
+                    if (mw > 0.0f) content_width = std::min(content_width, mw);
+                }
+
+                const style::Length& minw = storage.min_widths[si];
+                if (!minw.is_none()) {
+                    float mw = resolve_px(minw, fs, root_fs, vp, parent_width);
+                    if (border_box) mw -= pb_h;
+                    if (mw > 0.0f) content_width = std::max(content_width, mw);
+                }
             }
         }
 
         // -------- auto-margin (горизонтальный) --------
-        if (is_real) {
+        // Применяем только когда нет flex-override: во flex auto-margins
+        // имеют другое значение (поглощают свободное место вдоль оси).
+        if (is_real && override_content_width < 0.0f) {
             const uint32_t si = node->style_soa_idx;
             const bool ml_auto = storage.margin_left[si].is_auto();
             const bool mr_auto = storage.margin_right[si].is_auto();
@@ -931,12 +1228,6 @@ private:
         const float inner_x = g.border_left + g.padding_left;
         const float inner_y = g.border_top + g.padding_top;
 
-        // ------------------------------------------------------------
-        //  Схлопывание вертикальных margin между соседними детьми и через
-        //  границы родителя (CSS 2.1 §8.3.1).
-        //  Parent-child collapse переносит margin потомка на родителя,
-        //  поэтому сам потомок позиционируется без этого margin.
-        // ------------------------------------------------------------
         const bool has_children = !node->children.empty();
         bool collapse_top_with_child = false;
         bool collapse_bottom_with_child = false;
@@ -967,10 +1258,6 @@ private:
         bool first_child = true;
 
         for (auto& child : node->children) {
-            // Absolute-дети вырываются из потока:
-            // - не вызываем layout_node
-            // - не увеличиваем y_cursor
-            // - сохраняем static position относительно родителя
             if (child->style_soa_idx != UINT32_MAX
                 && storage.positions[child->style_soa_idx] == style::Position::Absolute) {
                 child->geometry.flow_x = inner_x + child->geometry.margin_left;
@@ -1001,8 +1288,6 @@ private:
         if (collapse_top_with_child)
             g.margin_top = collapse_margins(g.margin_top, node->children.front()->geometry.margin_top);
 
-        // При схлопывании с последним ребёнком его нижний margin выходит
-        // за content box и объединяется с margin родителя.
         if (collapse_bottom_with_child) {
             g.margin_bottom = collapse_margins(g.margin_bottom, prev_bottom);
         }
@@ -1050,15 +1335,6 @@ private:
 
     // =================================================================
     //  Inline element (<span>)
-    //
-    //  1. Считаем box model (margin/padding/border).
-    //  2. layout_ifc укладывает детей внутри content-области и ставит
-    //     intrinsic width/height.
-    //  3. Явный width/height и min/max переопределяют intrinsic.
-    //
-    //  TODO: если задан явный width, дети уже уложены по intrinsic.
-    //        Принципиально надо двухпроходный layout. Пока не делаем —
-    //        дети могут вылезти за пределы <span>.
     // =================================================================
     static void layout_inline(LayoutNode* node, float parent_width,
         const Viewport& vp,
@@ -1068,8 +1344,6 @@ private:
     {
         resolve_box_model(node, storage, vp, parent_width, root_fs);
 
-        // Вложенный IFC: укладывает детей и ставит node->geometry.width/height
-        // как intrinsic size содержимого (с учётом padding/border).
         layout_ifc(node, parent_width, vp, storage, root_fs, tm);
 
         auto& g = node->geometry;
@@ -1081,7 +1355,6 @@ private:
         const float pb_v = g.padding_top + g.padding_bottom
             + g.border_top + g.border_bottom;
 
-        // Явный width
         const style::Length& w = storage.widths[si];
         if (!w.is_auto() && !w.is_none()) {
             float spec = resolve_px(w, fs, root_fs, vp, parent_width);
@@ -1089,7 +1362,6 @@ private:
             g.width = pb_h + std::max(0.0f, spec);
         }
 
-        // Явный height
         const style::Length& h = storage.heights[si];
         if (!h.is_auto() && !h.is_none()) {
             float spec = resolve_px(h, fs, root_fs, vp, parent_width);
@@ -1097,7 +1369,6 @@ private:
             g.height = pb_v + std::max(0.0f, spec);
         }
 
-        // max-width
         const style::Length& maxw = storage.max_widths[si];
         if (!maxw.is_none()) {
             float mw = resolve_px(maxw, fs, root_fs, vp, parent_width);
@@ -1108,7 +1379,6 @@ private:
             }
         }
 
-        // min-width
         const style::Length& minw = storage.min_widths[si];
         if (!minw.is_none()) {
             float mw = resolve_px(minw, fs, root_fs, vp, parent_width);
@@ -1118,15 +1388,10 @@ private:
                 g.width = pb_h + content_w;
             }
         }
-
-        // max-height / min-height — аналогично, если понадобится.
     }
 
     // =================================================================
     //  Text — атомарный узел: одно слово или один пробел.
-    //  Ширина — ширина этого текста при текущем font-size/weight.
-    //  Высота — line-height одной строки.
-    //  Переносы по строкам делает родительский IFC, а не сам текст.
     // =================================================================
     static void layout_text(LayoutNode* node, float /*parent_width*/,
         const Viewport& /*vp*/,

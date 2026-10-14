@@ -5,6 +5,8 @@
 #include <QPaintEvent>          // ← вот это
 #include <QColor>
 #include <QFont>
+#include <QFontMetricsF>
+#include <QPointF>
 #include <QPalette>
 #include <QDebug>
 // ============================================================
@@ -103,14 +105,39 @@ void BrowserCanvas::renderToBacking() {
             break;
 
         case DisplayItemType::Text: {
+            if (item.text.empty()) break;
+
             QFont f = font();
-            f.setPixelSize(std::max(1, int(item.font_size)));         // ← без dpr
+            f.setPixelSize(std::max(1, int(item.font_size)));
             f.setBold(item.bold);
             p.setFont(f);
             p.setPen(color);
-            p.drawText(QRectF(item.x, item.y, item.width, item.height),
-                Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap,
+
+            // Симметрично display_list_renderer.cpp: drawText(QPointF)
+            // получает baseline, layout уже сверстал текст построчно
+            // (word-wrap не нужен — каждое слово отдельный DisplayItem).
+            QFontMetricsF fm(f);
+            const float baseline_y = item.y + fm.ascent();
+            p.drawText(QPointF(item.x, baseline_y),
                 QString::fromStdString(item.text));
+
+            // TODO: логика декораций продублирована из
+            // display_list_renderer.cpp. Вынести общий helper.
+            if (item.underline || item.overline || item.line_through) {
+                const float underline_y = baseline_y + fm.underlinePos();
+                const float overline_y = item.y;
+                const float line_through_y = item.y + item.height * 0.5f;
+
+                if (item.underline)
+                    p.drawLine(QPointF(item.x, underline_y),
+                        QPointF(item.x + item.width, underline_y));
+                if (item.overline)
+                    p.drawLine(QPointF(item.x, overline_y),
+                        QPointF(item.x + item.width, overline_y));
+                if (item.line_through)
+                    p.drawLine(QPointF(item.x, line_through_y),
+                        QPointF(item.x + item.width, line_through_y));
+            }
             break;
         }
         }
@@ -159,14 +186,39 @@ void BrowserCanvas::paintEvent(QPaintEvent* ev) {
             break;
 
         case DisplayItemType::Text: {
+            if (item.text.empty()) break;
+
             QFont f = font();
             f.setPixelSize(std::max(1, int(item.font_size)));
             f.setBold(item.bold);
             p.setFont(f);
             p.setPen(color);
-            p.drawText(QRectF(item.x, item.y, item.width, item.height),
-                Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap,
+
+            // Симметрично display_list_renderer.cpp: drawText(QPointF)
+            // получает baseline, layout уже сверстал текст построчно
+            // (word-wrap не нужен — каждое слово отдельный DisplayItem).
+            QFontMetricsF fm(f);
+            const float baseline_y = item.y + fm.ascent();
+            p.drawText(QPointF(item.x, baseline_y),
                 QString::fromStdString(item.text));
+
+            // TODO: логика декораций продублирована из
+            // display_list_renderer.cpp. Вынести общий helper.
+            if (item.underline || item.overline || item.line_through) {
+                const float underline_y = baseline_y + fm.underlinePos();
+                const float overline_y = item.y;
+                const float line_through_y = item.y + item.height * 0.5f;
+
+                if (item.underline)
+                    p.drawLine(QPointF(item.x, underline_y),
+                        QPointF(item.x + item.width, underline_y));
+                if (item.overline)
+                    p.drawLine(QPointF(item.x, overline_y),
+                        QPointF(item.x + item.width, overline_y));
+                if (item.line_through)
+                    p.drawLine(QPointF(item.x, line_through_y),
+                        QPointF(item.x + item.width, line_through_y));
+            }
             break;
         }
         }

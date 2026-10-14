@@ -38,6 +38,7 @@ struct StyleStorageSoA {
     std::vector<Visibility> visibilities;
     std::vector<BoxSizing>  box_sizings;
     std::vector<TextAlign>  text_aligns;
+    std::vector<style::TextDecoration> text_decorations;
     std::vector<FontStyle>  font_styles;
     std::vector<WhiteSpace> white_spaces;
     std::vector<FlexDir>    flex_directions;
@@ -94,6 +95,7 @@ struct StyleStorageSoA {
         visibilities.push_back(Visibility::Visible);
         box_sizings.push_back(BoxSizing::ContentBox);
         text_aligns.push_back(TextAlign::Start);
+        text_decorations.push_back(style::TextDecoration::None);
         font_styles.push_back(FontStyle::Normal);
         white_spaces.push_back(WhiteSpace::Normal);
         flex_directions.push_back(FlexDir::Row);

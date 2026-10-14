@@ -26,3 +26,13 @@
 A1 does not implement `normalize_flex_children`, text grouping,
 `wrap_anonymous_blocks` changes, `layout_block_container` changes, new
 `LayoutNode` fields, or changes to `style_types.h` and `style_storage_soa.h`.
+
+
+## Known limitations (out of scope for B, to be fixed in later groups)
+
+- Auto-width flex container uses intrinsic content width instead of
+  filling parent. CSS spec: `display: flex` (block-level) with `width: auto`
+  must fill parent. To be fixed in group D when justify-content needs
+  a non-intrinsic container width.
+- `background:` shorthand is not parsed — only `background-color:`.
+  Separate CSS shorthand task, not flex.

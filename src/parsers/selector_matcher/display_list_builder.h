@@ -19,7 +19,7 @@ public:
     }
 
 private:
-    // Text/AnonymousBlock не имеют style_soa_idx — поднимаемся вверх.
+    // Text/AnonymousBlock пїЅпїЅ пїЅпїЅпїЅпїЅпїЅ style_soa_idx пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ.
     static uint32_t effective_style_idx(const LayoutNode* node) {
         for (const LayoutNode* n = node; n; n = n->parent)
             if (n->style_soa_idx != UINT32_MAX) return n->style_soa_idx;
@@ -33,8 +33,16 @@ private:
         const float ay = oy + node->geometry.y;
         const float w = node->geometry.width;
         const float h = node->geometry.height;
+        if (node->style_soa_idx != UINT32_MAX) {
+            const DOMNode* dom = storage.dom_nodes[node->style_soa_idx];
+            if (dom && std::string_view(dom->tag_name.data(), dom->tag_name.size()) == "br") {
+                for (const auto& c : node->children)
+                    walk(c.get(), ax, ay, storage, out);
+                return;
+            }
+        }
 
-        // Background + borders — только у реальных Element-узлов.
+        // Background + borders пїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ Element-пїЅпїЅпїЅпїЅпїЅ.
         if ((node->type == BoxType::Block || node->type == BoxType::Inline)
             && node->style_soa_idx != UINT32_MAX)
         {
@@ -68,7 +76,7 @@ private:
                 g.border_right, h);
         }
 
-        // Текст.
+        // пїЅпїЅпїЅпїЅпїЅ.
         if (node->type == BoxType::Text) {
             const uint32_t si = effective_style_idx(node);
             DisplayItem it;
@@ -80,7 +88,10 @@ private:
             it.color = storage.text_colors[si];
             it.text = node->text_content;
             it.font_size = storage.font_sizes[si];
-            it.bold = storage.font_weights[si] >= 700;
+            const auto dec = storage.text_decorations[si];
+            it.underline = (static_cast<uint8_t>(dec) & 1u) != 0u;
+            it.overline = (static_cast<uint8_t>(dec) & 2u) != 0u;
+            it.line_through = (static_cast<uint8_t>(dec) & 4u) != 0u;
             out.items.push_back(std::move(it));
         }
 

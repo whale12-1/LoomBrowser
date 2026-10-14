@@ -1,4 +1,4 @@
-﻿#include <catch2/catch_test_macros.hpp>
+#include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
 
 #include <memory>
@@ -8,10 +8,10 @@
 #include "../layout/headers/layout_node.h"
 #include "../layout/headers/layout_tree_builder.h"
 #include "../parsers/selector_matcher/style_tree_builder.h"
-#include "../parsers/selector_matcher/style_storage_soa.h"
+#include "../parsers/selector_matcher/display_list_builder.h"
 #include "../parsers/html_parser/headers/html_parser.h"
 #include "../parsers/css_parser/headers/css_parser.h"
-#include "../parsers/arena_memory_allocator/headers/arena.h"
+#include "../parsers/selector_matcher/user_agent_stylesheet.h"
 
 namespace {
 
@@ -37,14 +37,17 @@ namespace {
     inline Pipeline run_pipeline(ArenaAllocator& arena,
         const std::string& inner_html,
         const std::string& css,
-        float viewport = 1024.0f) {
+        float viewport = 1024.0f,
+        bool use_full_ua = false) {
         std::string html = "<html><body>" + inner_html + "</body></html>";
 
-        // Мини-UA-stylesheet: html и body — block по умолчанию.
-        // Реальный браузер имеет таблицу UA-стилей; у нас её пока нет —
-        // эмулируем здесь, чтобы тесты концентрировались на своих сценариях.
-        std::string full_css =
-            "html, body { display: block; } " + css;
+        std::string full_css;
+        if (use_full_ua) {
+            full_css = std::string(ua_css::kSource) + " " + css;
+        }
+        else {
+            full_css = "html, body { display: block; } " + css;
+        }
 
         HTMLParser hp(arena);
         DOMNode* dom = hp.parse(html);
@@ -59,7 +62,7 @@ namespace {
         p.storage = StyleTreeBuilder::build(root_elem, *sheet);
         p.root = LayoutTreeBuilder::build(p.storage);
         if (p.root) {
-            LayoutTreeBuilder::Viewport vp{ viewport, 768.0f };   // width, height
+            LayoutTreeBuilder::Viewport vp{ viewport, 768.0f };
             LayoutTreeBuilder::compute_layout(p.root.get(), vp, p.storage);
         }
 
@@ -736,8 +739,30 @@ TEST_CASE("LTB integration: display:none child skipped in layout",
     REQUIRE(div->geometry.height == 60.0f);
 }
 
-// ============================================================
-//  ДОПОЛНЕНИЯ: auto-размеры, min/max, inline-flow, negative margin.
+TEST_CASE("LTB layout: br starts a new line", "[ltb][layout][br]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena, "<div>line1<br>line2</div>",
+        "html, body, div { display: block; margin: 0; padding: 0; }", 500.0f);
+
+    LayoutNode* body = child_of_type(p.root.get(), BoxType::Block);
+    REQUIRE(body != nullptr);
+    LayoutNode* div = child_of_type(body, BoxType::Block);
+    REQUIRE(div != nullptr);
+    LayoutNode* first = nullptr;
+    LayoutNode* second = nullptr;
+    for (const auto& child : div->children) {
+        if (child->type != BoxType::AnonymousBlock) continue;
+        for (const auto& inline_child : child->children) {
+            if (inline_child->type != BoxType::Text || inline_child->text_content == " ") continue;
+            if (!first) first = inline_child.get();
+            else if (!second) second = inline_child.get();
+        }
+    }
+    REQUIRE(first != nullptr);
+    REQUIRE(second != nullptr);
+    REQUIRE(second->geometry.y > first->geometry.y);
+    REQUIRE(div->geometry.height == Approx(2.0f * 16.0f * 1.2f));
+}
 // ============================================================
 
 TEST_CASE("LTB layout: auto width fills parent",
@@ -1289,4 +1314,196 @@ TEST_CASE("LTB flex row: border-box on flex item", "[ltb][layout][flex][row]") {
     auto* a = find_by_soa_idx(p.root.get(), 3);
     REQUIRE(a->geometry.width == Approx(100.0f).epsilon(0.001));
     REQUIRE(a->geometry.height == Approx(30.0f).epsilon(0.001));
+}
+
+
+TEST_CASE("LTB flex intrinsic: single text child measures its width", "[ltb][layout][flex][intrinsic]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena, "<div id='f'><p id='c'>hello</p></div>",
+        "#f { display: flex; } #c { display: block; }");
+    REQUIRE(find_by_soa_idx(p.root.get(), 3)->geometry.width > 0.0f);
+}
+
+TEST_CASE("LTB flex intrinsic: two text children stack in row", "[ltb][layout][flex][intrinsic]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena, "<div id='f'><p id='a'>hello</p><p id='b'>world</p></div>",
+        "#f { display: flex; } #a, #b { display: block; }");
+    auto* a = find_by_soa_idx(p.root.get(), 3);
+    auto* b = find_by_soa_idx(p.root.get(), 4);
+    REQUIRE(b->geometry.x >= a->geometry.width);
+}
+
+TEST_CASE("LTB flex intrinsic: explicit width overrides intrinsic", "[ltb][layout][flex][intrinsic]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena, "<div id='f'><p id='a'>long text here</p></div>",
+        "#f { display: flex; } #a { display: block; width: 50px; }");
+    REQUIRE(find_by_soa_idx(p.root.get(), 3)->geometry.width == Approx(50.0f));
+}
+
+TEST_CASE("LTB flex basis: explicit px", "[ltb][layout][flex][basis]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena, "<div id='f'><p id='a'>ignored text</p></div>",
+        "#f { display: flex; } #a { display: block; flex-basis: 100px; }");
+    REQUIRE(find_by_soa_idx(p.root.get(), 3)->geometry.width == Approx(100.0f));
+}
+
+TEST_CASE("LTB flex basis: auto with explicit width", "[ltb][layout][flex][basis]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena, "<div id='f'><p id='a'>text</p></div>",
+        "#f { display: flex; } #a { display: block; flex-basis: auto; width: 150px; }");
+    REQUIRE(find_by_soa_idx(p.root.get(), 3)->geometry.width == Approx(150.0f));
+}
+
+TEST_CASE("LTB flex basis: percent of container", "[ltb][layout][flex][basis]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena, "<div id='f'><p id='a'></p></div>",
+        "#f { display: flex; width: 400px; } #a { display: block; flex-basis: 25%; height: 10px; }");
+    REQUIRE(find_by_soa_idx(p.root.get(), 3)->geometry.width == Approx(100.0f));
+}
+
+TEST_CASE("LTB flex basis: auto with content", "[ltb][layout][flex][basis]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena, "<div id='f'><p id='a'>hello</p></div>",
+        "#f { display: flex; } #a { display: block; flex-basis: auto; }");
+    REQUIRE(find_by_soa_idx(p.root.get(), 3)->geometry.width > 0.0f);
+}
+
+TEST_CASE("LTB flex intrinsic: block child with nested block", "[ltb][layout][flex][intrinsic]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div id='f'><div id='a'><p id='p1'>hello</p><p id='p2'>world</p></div></div>",
+        "#f { display: flex; } #a, #p1, #p2 { display: block; }");
+    auto* a = find_by_soa_idx(p.root.get(), 3);
+    auto* p1 = find_by_soa_idx(p.root.get(), 4);
+    auto* p2 = find_by_soa_idx(p.root.get(), 5);
+    REQUIRE(a->geometry.width >= p1->geometry.width);
+    REQUIRE(a->geometry.width >= p2->geometry.width);
+    REQUIRE(a->geometry.width < p1->geometry.width + p2->geometry.width);
+}
+
+TEST_CASE("LTB flex intrinsic: intrinsic height from stacked blocks", "[ltb][layout][flex][intrinsic]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div id='f'><div id='a'><p style='height:20px'></p><p style='height:30px'></p></div></div>",
+        "#f { display: flex; } #a { display: block; } #a p { display: block; margin: 0; }");
+    REQUIRE(find_by_soa_idx(p.root.get(), 3)->geometry.height == Approx(50.0f));
+}
+
+TEST_CASE("LTB flex intrinsic: absolute child ignored", "[ltb][layout][flex][intrinsic]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div id='f'><p id='a'>text</p><span id='abs' style='position:absolute'></span></div>",
+        "#f { display: flex; } #a { display: block; }");
+    auto* f = find_by_soa_idx(p.root.get(), 2);
+    auto* a = find_by_soa_idx(p.root.get(), 3);
+    REQUIRE(a->geometry.width > 0.0f);
+    REQUIRE(f->children.size() == 2);
+    REQUIRE(f->children[0].get() == a);
+}
+
+// ============================================================
+//  Этап 2: text-decoration + цвет ссылок
+// ============================================================
+
+namespace {
+
+    inline const DisplayItem* find_text_item(const DisplayList& dl,
+        const std::string& text) {
+        for (const auto& it : dl.items) {
+            if (it.type == DisplayItemType::Text && it.text == text)
+                return &it;
+        }
+        return nullptr;
+    }
+
+} // namespace
+
+
+TEST_CASE("LTB decoration: link has underline and blue color",
+    "[ltb][decoration]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<a href='#'>link</a>",
+        "",
+        1024.0f,
+        /*use_full_ua=*/true);
+
+    REQUIRE(p.root != nullptr);
+
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+    const DisplayItem* item = find_text_item(dl, "link");
+    REQUIRE(item != nullptr);
+    REQUIRE(item->underline == true);
+    REQUIRE(item->line_through == false);
+    REQUIRE(item->overline == false);
+    REQUIRE(item->color == 0x0000EEFFu);
+}
+
+TEST_CASE("LTB decoration: inline style underline",
+    "[ltb][decoration]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<span style='text-decoration: underline'>x</span>",
+        "html, body, span { display: inline; }");
+
+    REQUIRE(p.root != nullptr);
+
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+    const DisplayItem* item = find_text_item(dl, "x");
+    REQUIRE(item != nullptr);
+    REQUIRE(item->underline == true);
+    REQUIRE(item->line_through == false);
+    REQUIRE(item->overline == false);
+}
+
+TEST_CASE("LTB decoration: default has no decorations",
+    "[ltb][decoration]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<span>x</span>",
+        "html, body, span { display: inline; }");
+
+    REQUIRE(p.root != nullptr);
+
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+    const DisplayItem* item = find_text_item(dl, "x");
+    REQUIRE(item != nullptr);
+    REQUIRE(item->underline == false);
+    REQUIRE(item->line_through == false);
+    REQUIRE(item->overline == false);
+}
+
+TEST_CASE("LTB decoration: underline + line-through bitmask",
+    "[ltb][decoration]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<span style='text-decoration: underline line-through'>x</span>",
+        "html, body, span { display: inline; }");
+
+    REQUIRE(p.root != nullptr);
+
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+    const DisplayItem* item = find_text_item(dl, "x");
+    REQUIRE(item != nullptr);
+    REQUIRE(item->underline == true);
+    REQUIRE(item->line_through == true);
+    REQUIRE(item->overline == false);
+}
+
+TEST_CASE("LTB decoration: not inherited from parent",
+    "[ltb][decoration]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div style='text-decoration: underline'><span>x</span></div>",
+        "html, body, div { display: block; } span { display: inline; }");
+
+    REQUIRE(p.root != nullptr);
+
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+    const DisplayItem* item = find_text_item(dl, "x");
+    REQUIRE(item != nullptr);
+    // text-decoration НЕ наследуется через каскад.
+    REQUIRE(item->underline == false);
+    REQUIRE(item->line_through == false);
+    REQUIRE(item->overline == false);
 }
