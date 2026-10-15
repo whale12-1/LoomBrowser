@@ -67,14 +67,16 @@ namespace {
     LayoutTreeBuilder::TextMetrics make_qt_metrics() {
         LayoutTreeBuilder::TextMetrics tm;
 
-        tm.measure_width = [](const std::string& text, float fs, bool bold) {
-            QFont f;
-            f.setPixelSize(std::max(1, qRound(fs)));
-            f.setBold(bold);
-            QFontMetricsF fm(f);
-            const QString s = QString::fromUtf8(text.data(),
-                static_cast<int>(text.size()));
-            return static_cast<float>(fm.horizontalAdvance(s));
+        tm.measure_width = [](const std::string& text, float fs,
+            bool bold, bool italic) {
+                QFont f;
+                f.setPixelSize(std::max(1, qRound(fs)));
+                f.setBold(bold);
+                f.setItalic(italic);
+                QFontMetricsF fm(f);
+                const QString s = QString::fromUtf8(text.data(),
+                    static_cast<int>(text.size()));
+                return static_cast<float>(fm.horizontalAdvance(s));
             };
 
         tm.line_spacing = [](float fs, bool bold) {

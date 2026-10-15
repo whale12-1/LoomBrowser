@@ -33,7 +33,8 @@ public:
     struct TextMetrics {
         std::function<float(const std::string& text,
             float font_size,
-            bool  bold)> measure_width;
+            bool  bold,
+            bool  italic)> measure_width;
 
         std::function<float(float font_size,
             bool  bold)> line_spacing;
@@ -41,7 +42,6 @@ public:
         bool hasWidth()  const { return static_cast<bool>(measure_width); }
         bool hasHeight() const { return static_cast<bool>(line_spacing); }
     };
-
     // =================================================================
     //  Phase 1 — построение дерева боксов
     // =================================================================
@@ -100,6 +100,9 @@ private:
         const uint32_t si = effective_style_idx(node);
         const float fs = storage.font_sizes[si];
         const bool bold = storage.font_weights[si] >= 700;
+        const auto fstyle = storage.font_styles[si];
+        const bool italic = (fstyle == style::FontStyle::Italic
+            || fstyle == style::FontStyle::Oblique);
         const Viewport vp{};
         const auto line_height = [&]() {
             if (storage.line_heights[si] == 0.0f && tm.hasHeight())
@@ -121,7 +124,7 @@ private:
 
         if (node->type == BoxType::Text) {
             const float width = tm.hasWidth()
-                ? tm.measure_width(node->text_content, fs, bold)
+                ? tm.measure_width(node->text_content, fs, bold, italic)
                 : node->text_content.size() * std::max(1.0f, fs * 0.55f);
             return { width, line_height() };
         }
@@ -1402,6 +1405,9 @@ private:
         const uint32_t si = effective_style_idx(node);
         const float fs = storage.font_sizes[si];
         const bool bold = storage.font_weights[si] >= 700;
+        const auto fstyle = storage.font_styles[si];
+        const bool italic = fstyle == style::FontStyle::Italic
+            || fstyle == style::FontStyle::Oblique;
 
         float lh;
         const float raw_lh = storage.line_heights[si];
@@ -1414,13 +1420,18 @@ private:
 
         float text_w;
         if (tm.hasWidth()) {
-            text_w = tm.measure_width(node->text_content, fs, bold);
+            text_w = tm.measure_width(node->text_content, fs, bold, italic);
         }
         else {
             text_w = node->text_content.size() * std::max(1.0f, fs * 0.55f);
         }
 
+        // TODO: for non-ASCII text, size() is not the codepoint count.
+        text_w += storage.letter_spacings[si]
+            * static_cast<float>(node->text_content.size());
+
         node->geometry.width = text_w;
         node->geometry.height = lh;
     }
 };
+

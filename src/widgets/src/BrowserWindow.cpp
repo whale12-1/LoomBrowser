@@ -24,11 +24,12 @@ namespace {
         const QFont base = widget->font();
 
         m.measure_width = [base](const std::string& text,
-            float fs, bool bold) -> float
+            float fs, bool bold, bool italic) -> float
             {
                 QFont f = base;
                 f.setPixelSize(std::max(1, int(fs)));
                 f.setBold(bold);
+                f.setItalic(italic);
                 QFontMetricsF fm(f);
                 return float(fm.horizontalAdvance(QString::fromStdString(text)));
             };

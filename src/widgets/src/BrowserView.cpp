@@ -110,6 +110,10 @@ void BrowserCanvas::renderToBacking() {
             QFont f = font();
             f.setPixelSize(std::max(1, int(item.font_size)));
             f.setBold(item.bold);
+            f.setItalic(item.italic);
+            if (item.letter_spacing != 0.0f) {
+                f.setLetterSpacing(QFont::AbsoluteSpacing, item.letter_spacing);
+            }
             p.setFont(f);
             p.setPen(color);
 
@@ -191,6 +195,10 @@ void BrowserCanvas::paintEvent(QPaintEvent* ev) {
             QFont f = font();
             f.setPixelSize(std::max(1, int(item.font_size)));
             f.setBold(item.bold);
+            f.setItalic(item.italic);
+            if (item.letter_spacing != 0.0f) {
+                f.setLetterSpacing(QFont::AbsoluteSpacing, item.letter_spacing);
+            }
             p.setFont(f);
             p.setPen(color);
 
@@ -247,4 +255,5 @@ BrowserView::BrowserView(QWidget* parent) : QScrollArea(parent) {
 void BrowserView::setDisplayList(const DisplayList& list) {
     canvas_->setDisplayList(list);
 }
+
 

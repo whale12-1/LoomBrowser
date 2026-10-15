@@ -1507,3 +1507,101 @@ TEST_CASE("LTB decoration: not inherited from parent",
     REQUIRE(item->line_through == false);
     REQUIRE(item->overline == false);
 }
+
+
+// ============================================================
+//  Этап 3: font-style: italic + letter-spacing
+// ============================================================
+
+TEST_CASE("LTB italic: <em> is italic",
+    "[ltb][italic]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<em>x</em>",
+        "",
+        1024.0f,
+        /*use_full_ua=*/true);
+
+    REQUIRE(p.root != nullptr);
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+    const DisplayItem* item = find_text_item(dl, "x");
+    REQUIRE(item != nullptr);
+    REQUIRE(item->italic == true);
+}
+
+TEST_CASE("LTB italic: inline style font-style:italic",
+    "[ltb][italic]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<span style='font-style: italic'>x</span>",
+        "html, body, span { display: inline; }");
+
+    REQUIRE(p.root != nullptr);
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+    const DisplayItem* item = find_text_item(dl, "x");
+    REQUIRE(item != nullptr);
+    REQUIRE(item->italic == true);
+}
+
+TEST_CASE("LTB italic: default is not italic",
+    "[ltb][italic]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<span>x</span>",
+        "html, body, span { display: inline; }");
+
+    REQUIRE(p.root != nullptr);
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+    const DisplayItem* item = find_text_item(dl, "x");
+    REQUIRE(item != nullptr);
+    REQUIRE(item->italic == false);
+}
+
+TEST_CASE("LTB letter-spacing: adds 6px for 3 chars at 2px",
+    "[ltb][letter-spacing]") {
+    ArenaAllocator arena;
+    auto p1 = run_pipeline(arena,
+        "<span style='letter-spacing: 2px'>abc</span>",
+        "");
+    auto p2 = run_pipeline(arena,
+        "<span style='letter-spacing: 0px'>abc</span>",
+        "");
+
+    // Проверяем через DisplayList: LayoutNode-форма дерева здесь
+    // может быть Inline → Inline → Inline, first_text_deep туда
+    // не заходит. DisplayList обходится плоско.
+    DisplayList dl1 = DisplayListBuilder::build(p1.root.get(), p1.storage);
+    DisplayList dl2 = DisplayListBuilder::build(p2.root.get(), p2.storage);
+
+    const DisplayItem* it1 = find_text_item(dl1, "abc");
+    const DisplayItem* it2 = find_text_item(dl2, "abc");
+    REQUIRE(it1 != nullptr);
+    REQUIRE(it2 != nullptr);
+    REQUIRE(it1->width - it2->width == Approx(6.0f).epsilon(0.01));
+}
+
+TEST_CASE("LTB letter-spacing: DisplayItem carries value",
+    "[ltb][letter-spacing]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<span style='letter-spacing: 3px'>x</span>",
+        "html, body, span { display: inline; }");
+
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+    const DisplayItem* item = find_text_item(dl, "x");
+    REQUIRE(item != nullptr);
+    REQUIRE(item->letter_spacing == Approx(3.0f).epsilon(0.001));
+}
+
+TEST_CASE("LTB letter-spacing: inherited from parent",
+    "[ltb][letter-spacing]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div style='letter-spacing: 3px'><span>x</span></div>",
+        "html, body, div { display: block; } span { display: inline; }");
+
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+    const DisplayItem* item = find_text_item(dl, "x");
+    REQUIRE(item != nullptr);
+    REQUIRE(item->letter_spacing == Approx(3.0f).epsilon(0.001));
+}

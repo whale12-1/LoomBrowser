@@ -88,10 +88,18 @@ private:
             it.color = storage.text_colors[si];
             it.text = node->text_content;
             it.font_size = storage.font_sizes[si];
+            it.bold = storage.font_weights[si] >= 700;
+
+            const auto fstyle = storage.font_styles[si];
+            it.italic = (fstyle == style::FontStyle::Italic
+                || fstyle == style::FontStyle::Oblique);
+            it.letter_spacing = storage.letter_spacings[si];
+
             const auto dec = storage.text_decorations[si];
             it.underline = (static_cast<uint8_t>(dec) & 1u) != 0u;
             it.overline = (static_cast<uint8_t>(dec) & 2u) != 0u;
             it.line_through = (static_cast<uint8_t>(dec) & 4u) != 0u;
+
             out.items.push_back(std::move(it));
         }
 

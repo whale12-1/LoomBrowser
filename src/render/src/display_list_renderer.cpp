@@ -49,6 +49,10 @@ QImage DisplayListRenderer::render(const DisplayList& list,
             QFont f;
             f.setPixelSize(std::max(1, qRound(item.font_size)));
             f.setBold(item.bold);
+            f.setItalic(item.italic);
+            if (item.letter_spacing != 0.0f) {
+                f.setLetterSpacing(QFont::AbsoluteSpacing, item.letter_spacing);
+            }
             p.setFont(f);
             p.setPen(QColor::fromRgba(css_to_qt(item.color)));
 
