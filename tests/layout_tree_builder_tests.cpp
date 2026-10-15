@@ -2257,3 +2257,128 @@ TEST_CASE("LTB baseline: line height is max(ascent) + max(descent)",
     // baseline_ascent ≈ 14.4 (leading 1.6 + ascent 12.8).
     REQUIRE(txt->geometry.baseline_ascent == Approx(14.4f).epsilon(0.01));
 }
+
+
+// ============================================================
+//  Этап 8: background-image: url(...)
+// ============================================================
+
+TEST_CASE("LTB background-image: url without quotes",
+    "[ltb][background-image]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div class='a'></div>",
+        "html, body, div { display: block; margin: 0; padding: 0; } "
+        ".a { background-image: url(test.png); width: 50px; height: 30px; }");
+
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+
+    bool found = false;
+    for (const auto& it : dl.items) {
+        if (it.type == DisplayItemType::Image
+            && it.image_path == "test.png") {
+            found = true;
+            // Растянуто на весь border-box.
+            REQUIRE(it.width == Approx(50.0f).epsilon(0.01));
+            REQUIRE(it.height == Approx(30.0f).epsilon(0.01));
+            break;
+        }
+    }
+    REQUIRE(found);
+}
+
+TEST_CASE("LTB background-image: url with double quotes",
+    "[ltb][background-image]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div class='a'></div>",
+        "html, body, div { display: block; margin: 0; padding: 0; } "
+        ".a { background-image: url(\"test.png\"); width: 10px; height: 10px; }");
+
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+    bool found = false;
+    for (const auto& it : dl.items) {
+        if (it.type == DisplayItemType::Image
+            && it.image_path == "test.png") {
+            found = true; break;
+        }
+    }
+    REQUIRE(found);
+}
+
+TEST_CASE("LTB background-image: url with single quotes",
+    "[ltb][background-image]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div class='a'></div>",
+        "html, body, div { display: block; margin: 0; padding: 0; } "
+        ".a { background-image: url('test.png'); width: 10px; height: 10px; }");
+
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+    bool found = false;
+    for (const auto& it : dl.items) {
+        if (it.type == DisplayItemType::Image
+            && it.image_path == "test.png") {
+            found = true; break;
+        }
+    }
+    REQUIRE(found);
+}
+
+TEST_CASE("LTB background-image: none emits no image",
+    "[ltb][background-image]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div class='a'></div>",
+        "html, body, div { display: block; margin: 0; padding: 0; } "
+        ".a { background-image: none; width: 20px; height: 20px; }");
+
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+    for (const auto& it : dl.items) {
+        REQUIRE(it.type != DisplayItemType::Image);
+    }
+}
+
+TEST_CASE("LTB background-image: not inherited",
+    "[ltb][background-image]") {
+    // Родитель с background-image, ребёнок без него — у ребёнка
+    // не должно быть своего Image-элемента.
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div class='parent'><span class='child'>x</span></div>",
+        "html, body, div { display: block; margin: 0; padding: 0; } "
+        ".parent { background-image: url(test.png); width: 100px; height: 50px; } ");
+
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+
+    int img_count = 0;
+    for (const auto& it : dl.items)
+        if (it.type == DisplayItemType::Image) ++img_count;
+
+    // Только один — от родителя. У span'а нет.
+    REQUIRE(img_count == 1);
+}
+
+TEST_CASE("LTB background-image: painted above background-color",
+    "[ltb][background-image]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div class='a'></div>",
+        "html, body, div { display: block; margin: 0; padding: 0; } "
+        ".a { background-color: red; background-image: url(test.png);"
+        "      width: 20px; height: 20px; }");
+
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+
+    // Ищем красный Rect и Image — Image должен идти ПОСЛЕ Rect
+    // (в display list более поздние items рисуются поверх).
+    int red_idx = -1, img_idx = -1;
+    for (size_t i = 0; i < dl.items.size(); ++i) {
+        if (dl.items[i].type == DisplayItemType::Rect
+            && dl.items[i].color == 0xFF0000FFu) red_idx = (int)i;
+        if (dl.items[i].type == DisplayItemType::Image) img_idx = (int)i;
+    }
+    REQUIRE(red_idx >= 0);
+    REQUIRE(img_idx >= 0);
+    REQUIRE(img_idx > red_idx);
+}

@@ -52,6 +52,7 @@ struct StyleStorageSoA {
     std::vector<uint32_t>   text_colors;          // 0xRRGGBBAA
     std::vector<uint32_t>   background_colors;
 
+    std::vector<std::string> background_images;
     // ������� (�� ��������� �� layout � em/rem/% �������� ��� ����)
     std::vector<Length>     widths, heights;
     std::vector<Length>     min_widths, max_widths, min_heights, max_heights;
@@ -109,6 +110,7 @@ struct StyleStorageSoA {
 
         text_colors.push_back(0x000000FFu);
         background_colors.push_back(0x00000000u);
+        background_images.push_back(std::string{});
 
         widths.push_back({ -1.0f, Unit::Auto });
         heights.push_back({ -1.0f, Unit::Auto });

@@ -33,7 +33,7 @@ namespace style {
     // ---- ������������� CSS-��������. ������������ � ������� ������� ----
     enum class Prop : uint16_t {
         Display, Position, Float, Overflow, Visibility, BoxSizing, ZIndex, Opacity,
-        Color, BackgroundColor,
+        Color, BackgroundColor, BackgroundImage,
         FontSize, FontWeight, FontStyle, LineHeight, TextAlign, LetterSpacing, WhiteSpace,
         TextDecoration,
         Width, Height, MinWidth, MaxWidth, MinHeight, MaxHeight,

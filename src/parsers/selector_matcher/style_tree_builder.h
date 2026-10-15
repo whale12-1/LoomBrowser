@@ -384,6 +384,7 @@ private:
             {"opacity",        P::Opacity},
             {"color",          P::Color},
             {"background-color", P::BackgroundColor},
+            {"background-image", P::BackgroundImage},
             {"font-size",      P::FontSize},
             {"font-weight",    P::FontWeight},
             {"font-style",     P::FontStyle},
@@ -467,6 +468,7 @@ private:
 
         case Prop::Color:           storage.text_colors[idx] = parse_color(v).pack(); break;
         case Prop::BackgroundColor: storage.background_colors[idx] = parse_color(v).pack(); break;
+        case Prop::BackgroundImage: storage.background_images[idx] = parse_url(v); break;
 
         case Prop::FontSize: {
             const float parent_fs = (parent_idx != INVALID_INDEX)
@@ -765,6 +767,50 @@ private:
         case Unit::Pt:      return l.value * 96.0f / 72.0f;
         default:            return l.value;
         }
+    }
+    // =================================================================
+//  background-image: url(...) | none
+//
+//  Поддерживаем три формы: url(path), url('path'), url("path").
+//  Возвращает путь без кавычек или "" для none / синтаксической
+//  ошибки. Сложные значения (градиенты, несколько фонов через
+//  запятую) пока не парсим — TODO.
+// =================================================================
+    static std::string parse_url(const std::string& v) {
+        size_t b = 0, e = v.size();
+        while (b < e && std::isspace((unsigned char)v[b])) ++b;
+        while (e > b && std::isspace((unsigned char)v[e - 1])) --e;
+        if (b == e) return "";
+        std::string s = v.substr(b, e - b);
+
+        if (s == "none") return "";
+
+        // Case-insensitive "url("
+        if (s.size() < 5) return "";
+        const char c0 = (char)std::tolower((unsigned char)s[0]);
+        const char c1 = (char)std::tolower((unsigned char)s[1]);
+        const char c2 = (char)std::tolower((unsigned char)s[2]);
+        if (c0 != 'u' || c1 != 'r' || c2 != 'l' || s[3] != '(') return "";
+
+        const size_t close = s.rfind(')');
+        if (close == std::string::npos || close < 4) return "";
+
+        std::string inner = s.substr(4, close - 4);
+
+        // trim
+        b = 0; e = inner.size();
+        while (b < e && std::isspace((unsigned char)inner[b])) ++b;
+        while (e > b && std::isspace((unsigned char)inner[e - 1])) --e;
+        inner = inner.substr(b, e - b);
+
+        // strip quotes
+        if (inner.size() >= 2) {
+            const char q = inner.front();
+            if ((q == '"' || q == '\'') && inner.back() == q) {
+                inner = inner.substr(1, inner.size() - 2);
+            }
+        }
+        return inner;
     }
 
     static style::Color parse_color(const std::string& v) {

@@ -87,6 +87,19 @@ private:
                 out.items.push_back(std::move(it));
             }
 
+            // background-image рисуется поверх background-color.
+            // Пока всегда растягивается на border-box — без
+            // background-size / -repeat / -position (TODO).
+            const std::string& bg_img = storage.background_images[si];
+            if (!bg_img.empty()) {
+                DisplayItem it;
+                it.type = DisplayItemType::Image;
+                it.x = ax; it.y = ay; it.width = w; it.height = h;
+                it.image_path = bg_img;
+                it.opacity = item_opacity;
+                out.items.push_back(std::move(it));
+            }
+
             const auto& g = node->geometry;
             const uint32_t top_color = storage.border_top_colors[si];
             const uint32_t right_color = storage.border_right_colors[si];
