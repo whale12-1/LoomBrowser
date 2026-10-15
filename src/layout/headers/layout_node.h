@@ -16,7 +16,14 @@ struct LayoutGeometry {
     float x{ 0.0f }, y{ 0.0f };
     float width{ 0.0f }, height{ 0.0f };
     float flow_x{ 0.0f };
-    float flow_y{ 0.0f };
+    float flow_y{ 0.0f }; 
+    // Baseline inline-элемента: расстояние от верхней границы border-box
+    // до его базовой линии и от базовой линии до нижней границы.
+    // Для Text — из метрик шрифта. Для Image — ascent=height, descent=0
+    // (baseline на нижней грани). Для Inline/AnonymousBlock — заполняется
+    // в layout_ifc.
+    float baseline_ascent{ 0.0f };
+    float baseline_descent{ 0.0f };
 
     float margin_top{ 0.0f }, margin_right{ 0.0f }, margin_bottom{ 0.0f }, margin_left{ 0.0f };
     float padding_top{ 0.0f }, padding_right{ 0.0f }, padding_bottom{ 0.0f }, padding_left{ 0.0f };

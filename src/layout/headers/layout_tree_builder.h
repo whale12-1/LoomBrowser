@@ -39,8 +39,18 @@ public:
         std::function<float(float font_size,
             bool  bold)> line_spacing;
 
-        bool hasWidth()  const { return static_cast<bool>(measure_width); }
-        bool hasHeight() const { return static_cast<bool>(line_spacing); }
+        // Метрики для baseline alignment: расстояние от верха глифов
+        // до базовой линии и от базовой линии до низа глифов.
+        // Опциональны: если не заданы — работает эвристика 0.8 / 0.2 от fs.
+        std::function<float(float font_size, bool bold)> ascent;
+        std::function<float(float font_size, bool bold)> descent;
+
+        bool hasWidth()    const { return static_cast<bool>(measure_width); }
+        bool hasHeight()   const { return static_cast<bool>(line_spacing); }
+        bool hasBaseline() const {
+            return static_cast<bool>(ascent)
+                && static_cast<bool>(descent);
+        }
     };
 
     // =================================================================
@@ -1086,20 +1096,21 @@ private:
         return tag == "br";
     }
 
+
     // =================================================================
-//  Inline Formatting Context
-//
-//  Раскладывает inline-level детей по строкам слева направо с переносом,
-//  применяет text-align к каждой закрытой строке.
-//
-//  Проход 1 (по детям): размещаем ребёнка с относительным x
-//  (без inner_x), копим в буфер строки. y задаётся сразу, по текущей
-//  строке.
-//
-//  Проход 2 (flush строки): по text-align вычисляем offset_x
-//  и сдвигаем всю строку (для justify — распределяем свободное
-//  место по пробелам).
-// =================================================================
+    //  Inline Formatting Context
+    //
+    //  Раскладывает inline-level детей по строкам с переносом.
+    //  Каждая строка выравнивается по baseline детей, а не по верхам.
+    //
+    //  Проход по детям: копим их в буфер строки (ширина + ascent +
+    //  descent), пока не накопится переполнение или <br>. y пока не
+    //  ставим.
+    //
+    //  flush_line: по максимальным ascent/descent строки вычисляем
+    //  высоту, применяем text-align (offset по x), расставляем y
+    //  каждого ребёнка так, чтобы baseline'ы совпали.
+    // =================================================================
     static void layout_ifc(LayoutNode* node, float parent_width,
         const Viewport& vp,
         const StyleStorageSoA& storage,
@@ -1116,31 +1127,62 @@ private:
             + g.border_left + g.border_right;
         const float avail = std::max(0.0f, parent_width - h_extra);
 
-        // text-align берём через effective_style_idx: для AnonymousBlock
-        // это ближайший styled-предок (блок-контейнер), для <span> —
-        // либо его собственный стиль, либо унаследованный.
         const uint32_t si_align = effective_style_idx(node);
         const style::TextAlign align = storage.text_aligns[si_align];
 
+        // ---- Strut контейнера ----
+        // Невидимая "буква" родителя участвует в формировании line box
+        // (CSS 2.1 §10.8). Иначе <div style="font-size:32px"><span
+        // style="font-size:12px">x</span></div> схлопнется по высоте
+        // 12-пиксельного span'а.
+        const float strut_fs = storage.font_sizes[si_align];
+        const bool  strut_bold = storage.font_weights[si_align] >= 700;
+        const float strut_lh = style::resolve_line_height(storage, si_align);
+        float strut_asc, strut_desc;
+        if (tm.hasBaseline()) {
+            strut_asc = tm.ascent(strut_fs, strut_bold);
+            strut_desc = tm.descent(strut_fs, strut_bold);
+        }
+        else {
+            strut_asc = strut_fs * 0.8f;
+            strut_desc = strut_fs * 0.2f;
+        }
+        const float strut_half_leading =
+            std::max(0.0f, (strut_lh - strut_asc - strut_desc) * 0.5f);
+        const float strut_ascent = strut_half_leading + strut_asc;
+        const float strut_descent = strut_half_leading + strut_desc;
+
         struct LineItem {
             LayoutNode* node;
-            float width;    // outer width (для подсчёта пробелов при justify)
+            float width;    // outer width (margin-box), для подсчёта line_x
+            float ascent;
+            float descent;
         };
         std::vector<LineItem> line;
 
-        float line_x = 0.0f;
-        float line_y = 0.0f;
-        float line_height = 0.0f;
+        float line_x = 0.0f;             // накопленная ширина строки
+        float line_top_y = 0.0f;         // верх текущей строки, от content-top
+        float line_max_ascent = 0.0f;
+        float line_max_descent = 0.0f;
         float max_line_width = 0.0f;
 
-        // Закрывает текущую строку: применяет offset по text-align
-        // и сдвигает всех её детей. Само `line` не очищает — очистку
-        // делает вызывающий.
-        auto flush_line = [&](bool is_last_line) {
-            if (line.empty()) return;
+        // Baseline последней строки — нужен для g.baseline_ascent.
+        float last_line_ascent = 0.0f;
+        float last_line_descent = 0.0f;
 
-            bool handled = false;
+        // Закрывает текущую строку. forced=true — даже если line пуст
+        // (для <br>). forced=false — no-op если line пуст.
+        auto flush_line = [&](bool forced) {
+            if (line.empty() && !forced) return;
+
+            // Строка содержит максимум из детей и strut.
+            const float ma = std::max(line_max_ascent, strut_ascent);
+            const float md = std::max(line_max_descent, strut_descent);
+            const float line_h = ma + md;
+
+            // text-align (по x).
             float offset = 0.0f;
+            bool handled = false;
 
             if (align == style::TextAlign::Right
                 || align == style::TextAlign::End) {
@@ -1149,21 +1191,24 @@ private:
             else if (align == style::TextAlign::Center) {
                 offset = (avail - line_x) * 0.5f;
             }
-            else if (align == style::TextAlign::Justify && !is_last_line) {
+            else if (align == style::TextAlign::Justify && !forced) {
+                // Justify — только для не-последних строк. Признак
+                // последней — forced=true (сюда приходит только <br>
+                // и конец IFC; конец IFC шлёт forced=true).
                 const float extra = avail - line_x;
                 if (extra > 0.0f) {
                     int spaces = 0;
                     for (const auto& it : line) {
                         if (it.node->type == BoxType::Text
-                            && it.node->text_content == " ") {
-                            ++spaces;
-                        }
+                            && it.node->text_content == " ") ++spaces;
                     }
                     if (spaces > 0) {
                         const float per_space = extra / float(spaces);
                         float acc = 0.0f;
                         for (auto& it : line) {
                             it.node->geometry.x += inner_x + acc;
+                            it.node->geometry.y =
+                                inner_y + line_top_y + (ma - it.ascent);
                             if (it.node->type == BoxType::Text
                                 && it.node->text_content == " ") {
                                 it.node->geometry.width += per_space;
@@ -1173,43 +1218,43 @@ private:
                         handled = true;
                     }
                 }
-                // Fallback (нет пробелов или extra<=0) — как Left.
             }
 
             if (!handled) {
                 if (offset < 0.0f) offset = 0.0f;
                 for (auto& it : line) {
                     it.node->geometry.x += inner_x + offset;
+                    it.node->geometry.y =
+                        inner_y + line_top_y + (ma - it.ascent);
                 }
             }
+
+            max_line_width = std::max(max_line_width, line_x);
+            last_line_ascent = ma;
+            last_line_descent = md;
+            line_top_y += line_h;
+
             line.clear();
+            line_x = 0.0f;
+            line_max_ascent = 0.0f;
+            line_max_descent = 0.0f;
             };
 
         for (auto& child : node->children) {
             layout_node(child.get(), avail, vp, storage, root_fs, tm);
 
             if (is_br(child.get(), storage)) {
-                // Сначала фиксируем текущую строку, потом обрабатываем br.
-                flush_line(/*is_last_line=*/false);
-                max_line_width = std::max(max_line_width, line_x);
-                line_y += (line_height > 0.0f)
-                    ? line_height
-                    : style::resolve_line_height(storage, si_align);
-                line_x = 0.0f;
-                line_height = 0.0f;
+                // <br> закрывает строку. Даже пустую — с высотой strut.
+                flush_line(/*forced=*/true);
                 child->geometry.x = inner_x;
-                child->geometry.y = inner_y + line_y;
+                child->geometry.y = inner_y + line_top_y;
                 child->geometry.width = 0.0f;
                 child->geometry.height = 0.0f;
                 continue;
             }
 
             const float w = child->geometry.width
-                + child->geometry.margin_left
-                + child->geometry.margin_right;
-            const float h = child->geometry.height
-                + child->geometry.margin_top
-                + child->geometry.margin_bottom;
+                + child->geometry.margin_left + child->geometry.margin_right;
 
             const bool is_space = (child->type == BoxType::Text
                 && child->text_content == " ");
@@ -1217,46 +1262,58 @@ private:
             // Пробел в начале строки схлопывается.
             if (is_space && line_x == 0.0f) {
                 child->geometry.x = inner_x;
-                child->geometry.y = inner_y + line_y;
+                child->geometry.y = inner_y + line_top_y;
                 child->geometry.width = 0.0f;
                 continue;
             }
 
-            // Не влезает — закрываем строку и начинаем новую.
+            // Переполнение — переносим на новую строку.
             if (line_x > 0.0f && line_x + w > avail) {
-                flush_line(/*is_last_line=*/false);
-                max_line_width = std::max(max_line_width, line_x);
-                line_y += line_height;
-                line_x = 0.0f;
-                line_height = 0.0f;
-
-                // Пробел, вызвавший перенос, схлопывается.
+                flush_line(/*forced=*/false);
                 if (is_space) {
                     child->geometry.x = inner_x;
-                    child->geometry.y = inner_y + line_y;
+                    child->geometry.y = inner_y + line_top_y;
                     child->geometry.width = 0.0f;
                     continue;
                 }
             }
 
-            // Позиционируем относительно начала строки (без inner_x);
-            // финальный сдвиг делает flush_line.
-            child->geometry.x = line_x + child->geometry.margin_left;
-            child->geometry.y = inner_y + line_y + child->geometry.margin_top;
+            // baseline ребёнка (из layout_text / layout_image /
+            // вложенного layout_inline → layout_ifc).
+            float cba = child->geometry.baseline_ascent;
+            float cbd = child->geometry.baseline_descent;
+            if (cba + cbd <= 0.0f) {
+                // Fallback: считаем, что baseline на нижней грани.
+                cba = child->geometry.height;
+                cbd = 0.0f;
+            }
 
-            line.push_back({ child.get(), w });
+            // x — временный, окончательный сдвиг делает flush_line.
+            child->geometry.x = line_x + child->geometry.margin_left;
+            // y — тоже временный; уточняется при flush.
+            child->geometry.y = inner_y + line_top_y;
+
+            line.push_back({ child.get(), w, cba, cbd });
             line_x += w;
-            line_height = std::max(line_height, h);
+            line_max_ascent = std::max(line_max_ascent, cba);
+            line_max_descent = std::max(line_max_descent, cbd);
         }
 
-        // Закрываем последнюю строку (justify на ней = left).
-        flush_line(/*is_last_line=*/true);
-        max_line_width = std::max(max_line_width, line_x);
-        line_y += line_height;
+        // Закрываем последнюю строку — если есть содержимое.
+        // Пустая IFC (без детей) сохраняет height = 0.
+        flush_line(/*forced=*/false);
+
+        // Baseline самого IFC = baseline последней строки.
+        // Из content-top: line_top_y - last_line_descent
+        // Из border-box top: + border_top + padding_top
+        g.baseline_ascent = g.border_top + g.padding_top
+            + line_top_y - last_line_descent;
+        g.baseline_descent = g.padding_bottom + g.border_bottom
+            + last_line_descent;
 
         g.width = g.border_left + g.padding_left + max_line_width
             + g.padding_right + g.border_right;
-        g.height = g.border_top + g.padding_top + line_y
+        g.height = g.border_top + g.padding_top + line_top_y
             + g.padding_bottom + g.border_bottom;
     }
 
@@ -1514,6 +1571,14 @@ private:
                 g.width = pb_h + content_w;
             }
         }
+
+        // Если span получил явную высоту, но baseline не был установлен
+// layout_ifc'ом (например, у него пустое содержимое) —
+// прижимаем baseline к низу бокса.
+        if (g.baseline_ascent + g.baseline_descent <= 0.0f) {
+            g.baseline_ascent = g.height;
+            g.baseline_descent = 0.0f;
+        }
     }
 
     // =================================================================
@@ -1555,17 +1620,34 @@ private:
 
         node->geometry.width = text_w;
         node->geometry.height = lh;
+
+        // ---- baseline ----
+        // ascent/descent берём из метрик (или эвристики 0.8/0.2 от fs).
+        // Разницу line-height и (ascent+descent) распределяем как
+        // half-leading сверху и снизу — CSS 2.1 §10.8.
+        float asc, desc;
+        if (tm.hasBaseline()) {
+            asc = tm.ascent(fs, bold);
+            desc = tm.descent(fs, bold);
+        }
+        else {
+            asc = fs * 0.8f;
+            desc = fs * 0.2f;
+        }
+        const float half_leading = std::max(0.0f, (lh - asc - desc) * 0.5f);
+        node->geometry.baseline_ascent = half_leading + asc;
+        node->geometry.baseline_descent = half_leading + desc;
     }
     // =================================================================
-//  Image (replaced element).
-//
-//  1) оба width/height заданы — используем их;
-//  2) только width — height = width * (ih / iw);
-//  3) только height — width = height / (ih / iw);
-//  4) оба auto — intrinsic size (или 0×0, если файл не найден).
-//
-//  TODO: max-width: 100%, object-fit, aspect-ratio.
-// =================================================================
+    //  Image (replaced element).
+    //
+    //  1) оба width/height заданы — используем их;
+    //  2) только width — height = width * (ih / iw);
+    //  3) только height — width = height / (ih / iw);
+    //  4) оба auto — intrinsic size (или 0×0, если файл не найден).
+    //
+    //  TODO: max-width: 100%, object-fit, aspect-ratio.
+    // =================================================================
     static void layout_image(LayoutNode* node, float parent_width,
         const Viewport& vp,
         const StyleStorageSoA& storage,
@@ -1649,6 +1731,11 @@ private:
 
         g.width = pb_h + content_w;
         g.height = pb_v + content_h;
+
+        // Baseline replaced element — на нижней грани content-box
+        // (CSS 2.1 §10.8.1).
+        g.baseline_ascent = g.height;
+        g.baseline_descent = 0.0f;
     }
 };
 

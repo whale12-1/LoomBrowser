@@ -42,6 +42,20 @@ namespace {
             return float(fm.lineSpacing());
             };
 
+        m.ascent = [base](float fs, bool bold) -> float {
+            QFont f = base;
+            f.setPixelSize(std::max(1, int(fs)));
+            f.setBold(bold);
+            return float(QFontMetricsF(f).ascent());
+            };
+
+        m.descent = [base](float fs, bool bold) -> float {
+            QFont f = base;
+            f.setPixelSize(std::max(1, int(fs)));
+            f.setBold(bold);
+            return float(QFontMetricsF(f).descent());
+            };
+
         return m;
     }
 

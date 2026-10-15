@@ -2197,3 +2197,63 @@ TEST_CASE("LTB text-align: justify acts as left on last line",
     REQUIRE(item != nullptr);
     REQUIRE(item->x == Approx(0.0f).epsilon(0.5));
 }
+
+
+TEST_CASE("LTB baseline: image and text sit on same baseline",
+    "[ltb][baseline]") {
+    // Текст "x" (16px) и картинка (40px). По baseline они должны
+    // стоять на одной линии: baseline совпадает.
+    ArenaAllocator arena;
+    auto p = run_pipeline_img(arena,
+        "<p>x<img src='test.png' style='width: 20px; height: 40px'></p>",
+        "html, body, p { display: block; margin: 0; padding: 0; }",
+        dummy_img_metrics());   // у test.png intrinsic 100×50, но явные
+    // width/height дают 20×40.
+
+    LayoutNode* body = child_of_type(p.root.get(), BoxType::Block);
+    LayoutNode* para = child_of_type(body, BoxType::Block);
+    LayoutNode* anon = child_of_type(para, BoxType::AnonymousBlock);
+    REQUIRE(anon != nullptr);
+
+    LayoutNode* txt = nullptr;
+    LayoutNode* img = nullptr;
+    for (auto& c : anon->children) {
+        if (c->type == BoxType::Text && c->text_content == "x") txt = c.get();
+        if (c->type == BoxType::Image) img = c.get();
+    }
+    REQUIRE(txt != nullptr);
+    REQUIRE(img != nullptr);
+
+    // baseline_ascent + ascent-ребёнка = y_baseline для обоих.
+    const float text_baseline_y =
+        txt->geometry.y + txt->geometry.baseline_ascent;
+    const float img_baseline_y =
+        img->geometry.y + img->geometry.baseline_ascent;
+    REQUIRE(text_baseline_y == Approx(img_baseline_y).epsilon(0.01));
+}
+
+TEST_CASE("LTB baseline: line height is max(ascent) + max(descent)",
+    "[ltb][baseline]") {
+    // Только text 16px. baseline_ascent ≈ 0.8 * 16 + leading,
+    // height = ascent + descent, как и раньше.
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div>hi</div>",
+        "html, body, div { display: block; font-size: 16px; margin: 0; padding: 0; }",
+        500.0f);
+    LayoutNode* body = child_of_type(p.root.get(), BoxType::Block);
+    LayoutNode* div = child_of_type(body, BoxType::Block);
+    LayoutNode* anon = child_of_type(div, BoxType::AnonymousBlock);
+    REQUIRE(anon != nullptr);
+
+    LayoutNode* txt = first_text_deep(anon);
+    REQUIRE(txt != nullptr);
+
+    // baseline_ascent + baseline_descent = высота текста (19.2).
+    REQUIRE(txt->geometry.baseline_ascent
+        + txt->geometry.baseline_descent == Approx(19.2f).epsilon(0.01));
+
+    // Внутри бокса текст стоит на baseline, а не на верхней грани.
+    // baseline_ascent ≈ 14.4 (leading 1.6 + ascent 12.8).
+    REQUIRE(txt->geometry.baseline_ascent == Approx(14.4f).epsilon(0.01));
+}

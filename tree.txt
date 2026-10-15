@@ -1,14 +1,22 @@
-[Block] soa=0 display=block position=static rect=(0,0 1024x167.844)
-  [Block] soa=1 display=block position=static rect=(0,0 1024x167.844)
-    [Block] soa=2 display=block position=static bg=#eeeeeeff rect=(0,0 1024x167.844) padding=(20,20,20,20)
-      [Block] soa=3 display=block position=static rect=(20,36 984x21.2812) margin=(16,0,16,0)
-        [AnonBlock] soa=ó rect=(0,0 984x21.2812)
-          [Text] soa=ó rect=(453.977,0 20.7812x21.2812) "–ü–æ"
-          [Text] soa=ó rect=(474.758,0 4.375x21.2812) " "
-          [Text] soa=ó rect=(479.133,0 50.8906x21.2812) "—Ü–µ–Ω—Ç—Ä—É"
-      [Block] soa=4 display=block position=static rect=(20,73.2812 984x21.2812) margin=(16,0,16,0)
-        [AnonBlock] soa=ó rect=(0,0 984x21.2812)
-          [Text] soa=ó rect=(930.703,0 53.2969x21.2812) "–°–ø—Ä–∞–≤–∞"
-      [Block] soa=5 display=block position=static rect=(20,110.562 984x21.2812) margin=(16,0,16,0)
-        [AnonBlock] soa=ó rect=(0,0 984x21.2812)
-          [Text] soa=ó rect=(0,0 43.2969x21.2812) "–°–ª–µ–≤–∞"
+[Block] soa=0 display=block position=static rect=(0,0 1024x161.859)
+  [Block] soa=1 display=block position=static rect=(8,16 1008x129.859) margin=(16,8,16,8)
+    [Block] soa=2 display=block position=static rect=(0,0 1008x21.2812) margin=(16,0,16,0)
+      [AnonBlock] soa=ó rect=(0,0 1008x21.2812)
+        [Text] soa=ó rect=(0,0 71.5781x21.2812) "–û–±—ã—á–Ω—ã–π"
+        [Text] soa=ó rect=(71.5781,0 4.375x21.2812) " "
+        [Text] soa=ó rect=(75.9531,0 40.2969x21.2812) "—Ç–µ–∫—Å—Ç."
+    [Block] soa=3 display=block position=static rect=(0,37.2812 1008x42.5625) margin=(16,0,16,0)
+      [AnonBlock] soa=ó rect=(0,0 1008x42.5625)
+        [Inline] soa=4 display=inline position=static font-size=32 rect=(0,0 44.9375x42.5625)
+          [Text] soa=ó rect=(0,0 44.9375x42.5625) "Big"
+        [Text] soa=ó rect=(44.9375,17.2656 4.375x21.2812) " "
+        [Text] soa=ó rect=(49.3125,17.2656 9.29688x21.2812) "–∏"
+        [Text] soa=ó rect=(58.6094,17.2656 4.375x21.2812) " "
+        [Text] soa=ó rect=(62.9844,17.2656 36.4531x21.2812) "small"
+    [Block] soa=5 display=block position=static rect=(0,95.8438 1008x34.0156) margin=(16,0,16,0)
+      [AnonBlock] soa=ó rect=(0,0 1008x34.0156)
+        [Text] soa=ó rect=(0,12.7344 38.6406x21.2812) "–¢–µ–∫—Å—Ç"
+        [Text] soa=ó rect=(38.6406,12.7344 4.375x21.2812) " "
+        [Image] soa=6 display=inline position=static rect=(43.0156,0 30x30)
+        [Text] soa=ó rect=(73.0156,12.7344 4.375x21.2812) " "
+        [Text] soa=ó rect=(77.3906,12.7344 36.8281x21.2812) "—Ç–µ–∫—Å—Ç"

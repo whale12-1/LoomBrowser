@@ -87,6 +87,20 @@ namespace {
             return static_cast<float>(fm.lineSpacing());
             };
 
+        tm.ascent = [](float fs, bool bold) {
+            QFont f;
+            f.setPixelSize(std::max(1, qRound(fs)));
+            f.setBold(bold);
+            return static_cast<float>(QFontMetricsF(f).ascent());
+            };
+
+        tm.descent = [](float fs, bool bold) {
+            QFont f;
+            f.setPixelSize(std::max(1, qRound(fs)));
+            f.setBold(bold);
+            return static_cast<float>(QFontMetricsF(f).descent());
+            };
+
         return tm;
     }
     std::string resolve_path(const std::string& base_dir,
