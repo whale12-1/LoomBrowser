@@ -413,6 +413,10 @@ private:
             {"border-right-width",  P::BorderRightWidth},
             {"border-bottom-width", P::BorderBottomWidth},
             {"border-left-width",   P::BorderLeftWidth},
+            {"border-top-color",    P::BorderTopColor},
+            {"border-right-color",  P::BorderRightColor},
+            {"border-bottom-color", P::BorderBottomColor},
+            {"border-left-color",   P::BorderLeftColor},
             {"flex-direction",  P::FlexDirection},
             {"justify-content", P::JustifyContent},
             {"align-items",     P::AlignItems},
@@ -522,6 +526,10 @@ private:
         case Prop::BorderRightWidth:  storage.border_right_width[idx] = parse_length(v); break;
         case Prop::BorderBottomWidth: storage.border_bottom_width[idx] = parse_length(v); break;
         case Prop::BorderLeftWidth:   storage.border_left_width[idx] = parse_length(v); break;
+        case Prop::BorderTopColor:    storage.border_top_colors[idx] = parse_color(v).pack(); break;
+        case Prop::BorderRightColor:  storage.border_right_colors[idx] = parse_color(v).pack(); break;
+        case Prop::BorderBottomColor: storage.border_bottom_colors[idx] = parse_color(v).pack(); break;
+        case Prop::BorderLeftColor:   storage.border_left_colors[idx] = parse_color(v).pack(); break;
 
         case Prop::FlexGrow:   storage.flex_grows[idx] = std::strtof(v.c_str(), nullptr); break;
         case Prop::FlexShrink: storage.flex_shrinks[idx] = std::strtof(v.c_str(), nullptr); break;

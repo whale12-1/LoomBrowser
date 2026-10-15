@@ -59,6 +59,7 @@ struct StyleStorageSoA {
     std::vector<Length>     margin_top, margin_right, margin_bottom, margin_left;
     std::vector<Length>     padding_top, padding_right, padding_bottom, padding_left;
     std::vector<Length>     border_top_width, border_right_width, border_bottom_width, border_left_width;
+    std::vector<uint32_t>   border_top_colors, border_right_colors, border_bottom_colors, border_left_colors;
     std::vector<Length>     flex_bases;
     std::vector<float>      flex_grows, flex_shrinks;
 
@@ -131,6 +132,11 @@ struct StyleStorageSoA {
         border_right_width.push_back({ 0.0f, Unit::Px });
         border_bottom_width.push_back({ 0.0f, Unit::Px });
         border_left_width.push_back({ 0.0f, Unit::Px });
+        // Дефолт border-color — чёрный (как в браузерах).
+        border_top_colors.push_back(0x000000FFu);
+        border_right_colors.push_back(0x000000FFu);
+        border_bottom_colors.push_back(0x000000FFu);
+        border_left_colors.push_back(0x000000FFu);
         flex_bases.push_back({ -1.0f, Unit::Auto });
         flex_grows.push_back(0.0f);
         flex_shrinks.push_back(1.0f);

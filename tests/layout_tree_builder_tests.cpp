@@ -1605,3 +1605,144 @@ TEST_CASE("LTB letter-spacing: inherited from parent",
     REQUIRE(item != nullptr);
     REQUIRE(item->letter_spacing == Approx(3.0f).epsilon(0.001));
 }
+
+
+
+// ============================================================
+//  Этап 4: border-color + <hr>
+// ============================================================
+
+namespace {
+
+    inline bool dl_has_rect(const DisplayList& dl, uint32_t color,
+        float w, float h)
+    {
+        for (const auto& it : dl.items) {
+            if (it.type != DisplayItemType::Rect) continue;
+            if (it.color != color) continue;
+            if (std::abs(it.width - w) > 0.01f) continue;
+            if (std::abs(it.height - h) > 0.01f) continue;
+            return true;
+        }
+        return false;
+    }
+
+} // namespace
+
+
+TEST_CASE("LTB border-color: top border uses inline color",
+    "[ltb][border-color]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div style='border-top-width: 2px;"
+        "            border-top-color: red;"
+        "            width: 100px; height: 50px'></div>",
+        "html, body, div { display: block; margin: 0; padding: 0; }");
+
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+    // Верхняя граница: ширина = w (100), высота = 2, цвет = красный.
+    REQUIRE(dl_has_rect(dl, 0xFF0000FFu, 100.0f, 2.0f));
+}
+
+TEST_CASE("LTB border-color: per-side colors",
+    "[ltb][border-color]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div style='"
+        "  border-top-width: 1px; border-top-color: red;"
+        "  border-right-width: 1px; border-right-color: green;"
+        "  border-bottom-width: 1px; border-bottom-color: blue;"
+        "  border-left-width: 1px; border-left-color: yellow;"
+        "  width: 50px; height: 50px;'></div>",
+        "html, body, div { display: block; margin: 0; padding: 0; }");
+
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+
+    auto has_color = [&](uint32_t c) {
+        for (const auto& it : dl.items)
+            if (it.type == DisplayItemType::Rect && it.color == c) return true;
+        return false;
+        };
+    REQUIRE(has_color(0xFF0000FFu));  // red
+    REQUIRE(has_color(0x008000FFu));  // green
+    REQUIRE(has_color(0x0000FFFFu));  // blue
+    REQUIRE(has_color(0xFFFF00FFu));  // yellow
+}
+
+TEST_CASE("LTB border-color: shorthand sets all sides",
+    "[ltb][border-color]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div style='"
+        "  border-top-width: 1px; border-right-width: 1px;"
+        "  border-bottom-width: 1px; border-left-width: 1px;"
+        "  border-color: #ff0000;"
+        "  width: 30px; height: 30px;'></div>",
+        "html, body, div { display: block; margin: 0; padding: 0; }");
+
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+
+    int red_count = 0;
+    for (const auto& it : dl.items)
+        if (it.type == DisplayItemType::Rect && it.color == 0xFF0000FFu)
+            ++red_count;
+    REQUIRE(red_count == 4);  // 4 стороны
+}
+
+TEST_CASE("LTB border-color: default is black",
+    "[ltb][border-color]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div style='border-top-width: 1px; width: 20px; height: 20px'></div>",
+        "html, body, div { display: block; margin: 0; padding: 0; }");
+
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+    REQUIRE(dl_has_rect(dl, 0x000000FFu, 20.0f, 1.0f));
+}
+
+TEST_CASE("LTB border-color: transparent emits no rect",
+    "[ltb][border-color]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div style='border-top-width: 5px;"
+        "            border-top-color: transparent;"
+        "            width: 10px; height: 10px'></div>",
+        "html, body, div { display: block; margin: 0; padding: 0; }");
+
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+
+    // Ни одного rect высотой 5 быть не должно.
+    bool found = false;
+    for (const auto& it : dl.items)
+        if (it.type == DisplayItemType::Rect
+            && std::abs(it.height - 5.0f) < 0.01f) {
+            found = true; break;
+        }
+    REQUIRE_FALSE(found);
+}
+
+TEST_CASE("LTB integration: <hr> border is gray",
+    "[ltb][integration][hr]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<p>Above</p><hr><p>Below</p>",
+        "",
+        1024.0f,
+        /*use_full_ua=*/true);
+
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+
+    // <hr> → border-top-width: 1px; border-color: #808080 (UA CSS).
+    // Ищем серый rect высотой 1. Ширину не проверяем — она зависит
+    // от того, как body распределил ширину.
+    bool found_gray = false;
+    for (const auto& it : dl.items) {
+        if (it.type == DisplayItemType::Rect
+            && it.color == 0x808080FFu
+            && std::abs(it.height - 1.0f) < 0.01f) {
+            found_gray = true;
+            break;
+        }
+    }
+    REQUIRE(found_gray);
+}

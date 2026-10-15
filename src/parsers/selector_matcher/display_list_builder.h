@@ -58,22 +58,33 @@ private:
             }
 
             const auto& g = node->geometry;
-            constexpr uint32_t kBorderColor = 0x000000FFu;  // TODO: border-color
 
-            auto push_border = [&](float bx, float by, float bw, float bh) {
-                DisplayItem bi;
-                bi.type = DisplayItemType::Rect;
-                bi.x = bx; bi.y = by; bi.width = bw; bi.height = bh;
-                bi.color = kBorderColor;
-                out.items.push_back(std::move(bi));
+            const uint32_t top_color = storage.border_top_colors[si];
+            const uint32_t right_color = storage.border_right_colors[si];
+            const uint32_t bottom_color = storage.border_bottom_colors[si];
+            const uint32_t left_color = storage.border_left_colors[si];
+
+            auto push_border = [&](float bx, float by, float bw, float bh,
+                uint32_t color) {
+                    // Alpha == 0 → граница невидима (transparent).
+                    if ((color & 0xFFu) == 0u) return;
+                    DisplayItem bi;
+                    bi.type = DisplayItemType::Rect;
+                    bi.x = bx; bi.y = by; bi.width = bw; bi.height = bh;
+                    bi.color = color;
+                    out.items.push_back(std::move(bi));
                 };
 
-            if (g.border_top > 0.0f) push_border(ax, ay, w, g.border_top);
-            if (g.border_bottom > 0.0f) push_border(ax, ay + h - g.border_bottom,
-                w, g.border_bottom);
-            if (g.border_left > 0.0f) push_border(ax, ay, g.border_left, h);
-            if (g.border_right > 0.0f) push_border(ax + w - g.border_right, ay,
-                g.border_right, h);
+            if (g.border_top > 0.0f)
+                push_border(ax, ay, w, g.border_top, top_color);
+            if (g.border_bottom > 0.0f)
+                push_border(ax, ay + h - g.border_bottom,
+                    w, g.border_bottom, bottom_color);
+            if (g.border_left > 0.0f)
+                push_border(ax, ay, g.border_left, h, left_color);
+            if (g.border_right > 0.0f)
+                push_border(ax + w - g.border_right, ay,
+                    g.border_right, h, right_color);
         }
 
         // �����.

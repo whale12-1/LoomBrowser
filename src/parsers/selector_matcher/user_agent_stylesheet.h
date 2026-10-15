@@ -43,7 +43,7 @@ blockquote { margin: 1em 40px; }
 pre        { margin: 1em 0; white-space: pre; }
 
 /* === ������ === */
-hr { border-top-width: 1px; margin: 0.5em auto; }
+hr { border-top-width: 1px; border-color: #808080; margin: 0.5em auto; }
 
 /* === ���������� ���������� === */
 b, strong { font-weight: bold; }

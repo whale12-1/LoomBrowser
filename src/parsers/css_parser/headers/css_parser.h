@@ -652,6 +652,8 @@ private:
                                  "padding-bottom","padding-left" }} },
             { "border-width", {{ "border-top-width",  "border-right-width",
                                  "border-bottom-width","border-left-width"  }} },
+            { "border-color", {{ "border-top-color",  "border-right-color",
+                                 "border-bottom-color","border-left-color"  }} },
         };
         return t;
     }

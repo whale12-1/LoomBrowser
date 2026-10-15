@@ -41,6 +41,7 @@ namespace style {
         MarginTop, MarginRight, MarginBottom, MarginLeft,
         PaddingTop, PaddingRight, PaddingBottom, PaddingLeft,
         BorderTopWidth, BorderRightWidth, BorderBottomWidth, BorderLeftWidth,
+        BorderTopColor, BorderRightColor, BorderBottomColor, BorderLeftColor,
         FlexDirection, JustifyContent, AlignItems, FlexGrow, FlexShrink, FlexBasis,
         COUNT
     };
