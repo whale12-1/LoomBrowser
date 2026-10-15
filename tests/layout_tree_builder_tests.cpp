@@ -1861,3 +1861,339 @@ TEST_CASE("LTB opacity: not inherited",
     REQUIRE(item != nullptr);
     REQUIRE(item->opacity == Approx(1.0f).epsilon(0.01));
 }
+
+
+
+// ============================================================
+//  Этап 6: <img> — replaced element
+// ============================================================
+
+namespace {
+
+    // Dummy ImageMetrics: "test.png" всегда 100×50, остальное — 0×0.
+    inline LayoutTreeBuilder::ImageMetrics dummy_img_metrics() {
+        LayoutTreeBuilder::ImageMetrics m;
+        m.intrinsic_size = [](const std::string& src)
+            -> std::pair<float, float>
+            {
+                if (src == "test.png") return { 100.0f, 50.0f };
+                return { 0.0f, 0.0f };
+            };
+        return m;
+    }
+
+    inline Pipeline run_pipeline_img(ArenaAllocator& arena,
+        const std::string& inner_html,
+        const std::string& css,
+        const LayoutTreeBuilder::ImageMetrics& im,
+        float viewport = 1024.0f,
+        bool use_full_ua = false)
+    {
+        std::string html = "<html><body>" + inner_html + "</body></html>";
+        std::string full_css;
+        if (use_full_ua) full_css = std::string(ua_css::kSource) + " " + css;
+        else full_css = "html, body { display: block; } " + css;
+
+        HTMLParser hp(arena);
+        DOMNode* dom = hp.parse(html);
+        DOMNode* root_elem = first_element(dom);
+        REQUIRE(root_elem != nullptr);
+
+        CSSParser cp(arena);
+        StyleSheet* sheet = cp.parse(full_css);
+        REQUIRE(sheet != nullptr);
+
+        Pipeline p;
+        p.storage = StyleTreeBuilder::build(root_elem, *sheet);
+        p.root = LayoutTreeBuilder::build(p.storage, im);
+        if (p.root) {
+            LayoutTreeBuilder::Viewport vp{ viewport, 768.0f };
+            LayoutTreeBuilder::compute_layout(p.root.get(), vp, p.storage);
+        }
+        return p;
+    }
+
+    inline LayoutNode* find_image(LayoutNode* node) {
+        if (!node) return nullptr;
+        if (node->type == BoxType::Image) return node;
+        for (auto& c : node->children)
+            if (auto* r = find_image(c.get())) return r;
+        return nullptr;
+    }
+
+} // namespace
+
+
+TEST_CASE("LTB img: element becomes BoxType::Image", "[ltb][img]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline_img(arena,
+        "<img src='test.png'>",
+        "html, body { display: block; }",
+        dummy_img_metrics());
+    REQUIRE(p.root != nullptr);
+    LayoutNode* img = find_image(p.root.get());
+    REQUIRE(img != nullptr);
+    REQUIRE(img->image_src == "test.png");
+}
+
+TEST_CASE("LTB img: intrinsic size used when no CSS sizes", "[ltb][img]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline_img(arena,
+        "<img src='test.png'>",
+        "html, body { display: block; margin: 0; padding: 0; }",
+        dummy_img_metrics());
+    LayoutNode* img = find_image(p.root.get());
+    REQUIRE(img != nullptr);
+    REQUIRE(img->geometry.width == Approx(100.0f).epsilon(0.01));
+    REQUIRE(img->geometry.height == Approx(50.0f).epsilon(0.01));
+}
+
+TEST_CASE("LTB img: explicit width scales height proportionally", "[ltb][img]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline_img(arena,
+        "<img src='test.png' style='width: 200px'>",
+        "html, body { display: block; margin: 0; padding: 0; }",
+        dummy_img_metrics());
+    LayoutNode* img = find_image(p.root.get());
+    REQUIRE(img != nullptr);
+    REQUIRE(img->geometry.width == Approx(200.0f).epsilon(0.01));
+    REQUIRE(img->geometry.height == Approx(100.0f).epsilon(0.01));
+}
+
+TEST_CASE("LTB img: explicit height scales width proportionally", "[ltb][img]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline_img(arena,
+        "<img src='test.png' style='height: 100px'>",
+        "html, body { display: block; margin: 0; padding: 0; }",
+        dummy_img_metrics());
+    LayoutNode* img = find_image(p.root.get());
+    REQUIRE(img != nullptr);
+    REQUIRE(img->geometry.width == Approx(200.0f).epsilon(0.01));
+    REQUIRE(img->geometry.height == Approx(100.0f).epsilon(0.01));
+}
+
+TEST_CASE("LTB img: both sizes explicit — no scaling", "[ltb][img]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline_img(arena,
+        "<img src='test.png' style='width: 30px; height: 40px'>",
+        "html, body { display: block; margin: 0; padding: 0; }",
+        dummy_img_metrics());
+    LayoutNode* img = find_image(p.root.get());
+    REQUIRE(img != nullptr);
+    REQUIRE(img->geometry.width == Approx(30.0f).epsilon(0.01));
+    REQUIRE(img->geometry.height == Approx(40.0f).epsilon(0.01));
+}
+
+TEST_CASE("LTB img: missing file — 0×0 if no CSS sizes", "[ltb][img]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline_img(arena,
+        "<img src='missing.png'>",
+        "html, body { display: block; margin: 0; padding: 0; }",
+        dummy_img_metrics());
+    LayoutNode* img = find_image(p.root.get());
+    REQUIRE(img != nullptr);
+    REQUIRE(img->geometry.width == Approx(0.0f));
+    REQUIRE(img->geometry.height == Approx(0.0f));
+}
+
+TEST_CASE("LTB img: display list carries Image item", "[ltb][img]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline_img(arena,
+        "<img src='test.png'>",
+        "html, body { display: block; margin: 0; padding: 0; }",
+        dummy_img_metrics());
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+    bool has_image = false;
+    for (const auto& it : dl.items) {
+        if (it.type == DisplayItemType::Image
+            && it.image_path == "test.png") {
+            has_image = true; break;
+        }
+    }
+    REQUIRE(has_image);
+}
+
+
+TEST_CASE("LTB img: max-width caps large image",
+    "[ltb][img][max]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline_img(arena,
+        "<img src='test.png' style='max-width: 50px'>",
+        "html, body { display: block; margin: 0; padding: 0; }",
+        dummy_img_metrics());
+
+    LayoutNode* img = find_image(p.root.get());
+    REQUIRE(img != nullptr);
+    // 100×50 intrinsic, max-width: 50 → 50×25 (пропорции сохранены).
+    REQUIRE(img->geometry.width == Approx(50.0f).epsilon(0.01));
+    REQUIRE(img->geometry.height == Approx(25.0f).epsilon(0.01));
+}
+
+TEST_CASE("LTB img: max-height caps tall image",
+    "[ltb][img][max]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline_img(arena,
+        "<img src='test.png' style='max-height: 20px'>",
+        "html, body { display: block; margin: 0; padding: 0; }",
+        dummy_img_metrics());
+
+    LayoutNode* img = find_image(p.root.get());
+    REQUIRE(img != nullptr);
+    // 100×50 intrinsic, max-height: 20 → 40×20.
+    REQUIRE(img->geometry.width == Approx(40.0f).epsilon(0.01));
+    REQUIRE(img->geometry.height == Approx(20.0f).epsilon(0.01));
+}
+
+TEST_CASE("LTB img: max-width does not upscale small image",
+    "[ltb][img][max]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline_img(arena,
+        "<img src='test.png' style='max-width: 500px'>",
+        "html, body { display: block; margin: 0; padding: 0; }",
+        dummy_img_metrics());
+
+    LayoutNode* img = find_image(p.root.get());
+    REQUIRE(img != nullptr);
+    // max-width больше intrinsic — размер остаётся intrinsic.
+    REQUIRE(img->geometry.width == Approx(100.0f).epsilon(0.01));
+    REQUIRE(img->geometry.height == Approx(50.0f).epsilon(0.01));
+}
+
+TEST_CASE("LTB img: explicit width wins over max-width",
+    "[ltb][img][max]") {
+    // Если width <= max-width, обе применяются нормально.
+    // Если width > max-width, срабатывает max-width.
+    ArenaAllocator arena;
+    auto p = run_pipeline_img(arena,
+        "<img src='test.png' style='width: 200px; max-width: 50px'>",
+        "html, body { display: block; margin: 0; padding: 0; }",
+        dummy_img_metrics());
+
+    LayoutNode* img = find_image(p.root.get());
+    REQUIRE(img != nullptr);
+    // width: 200 → max-width: 50 отсекает до 50×25.
+    REQUIRE(img->geometry.width == Approx(50.0f).epsilon(0.01));
+    REQUIRE(img->geometry.height == Approx(25.0f).epsilon(0.01));
+}
+
+TEST_CASE("LTB img: UA max-width: 100% shrinks to parent",
+    "[ltb][img][max][ua]") {
+    // В UA CSS добавлено img { max-width: 100%; }.
+    // Картинка 100×50 при viewport 60 → ужимается до 60×30.
+    ArenaAllocator arena;
+    auto p = run_pipeline_img(arena,
+        "<img src='test.png'>",
+        "html, body { display: block; margin: 0; padding: 0; }",
+        dummy_img_metrics(),
+        /*viewport=*/60.0f,
+        /*use_full_ua=*/true);
+
+    LayoutNode* img = find_image(p.root.get());
+    REQUIRE(img != nullptr);
+    REQUIRE(img->geometry.width == Approx(60.0f).epsilon(0.01));
+    REQUIRE(img->geometry.height == Approx(30.0f).epsilon(0.01));
+}
+
+TEST_CASE("LTB img: author max-width: none overrides UA",
+    "[ltb][img][max][ua]") {
+    // Авторский max-width: none должен перекрыть UA-правило.
+    // Парсер: "none" → Length{0, Unit::None}, is_none() == true.
+    ArenaAllocator arena;
+    auto p = run_pipeline_img(arena,
+        "<img src='test.png' style='max-width: none'>",
+        "html, body { display: block; margin: 0; padding: 0; }",
+        dummy_img_metrics(),
+        /*viewport=*/60.0f,
+        /*use_full_ua=*/true);
+
+    LayoutNode* img = find_image(p.root.get());
+    REQUIRE(img != nullptr);
+    // Без UA-ограничения — intrinsic 100×50, хотя parent всего 60.
+    REQUIRE(img->geometry.width == Approx(100.0f).epsilon(0.01));
+    REQUIRE(img->geometry.height == Approx(50.0f).epsilon(0.01));
+}
+
+
+
+// ============================================================
+//  Этап 7: text-align
+// ============================================================
+
+TEST_CASE("LTB text-align: left is default (no shift)",
+    "[ltb][text-align]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div style='width: 100px'>hi</div>",
+        "html, body, div { display: block; margin: 0; padding: 0; }");
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+    const DisplayItem* item = find_text_item(dl, "hi");
+    REQUIRE(item != nullptr);
+    REQUIRE(item->x == Approx(0.0f).epsilon(0.5));
+}
+
+TEST_CASE("LTB text-align: center shifts to middle",
+    "[ltb][text-align]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div style='width: 100px; text-align: center'>hi</div>",
+        "html, body, div { display: block; margin: 0; padding: 0; }");
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+    const DisplayItem* item = find_text_item(dl, "hi");
+    REQUIRE(item != nullptr);
+    // "hi" = 2 * 16 * 0.55 = 17.6. offset = (100 - 17.6) / 2 = 41.2.
+    REQUIRE(item->x == Approx(41.2f).epsilon(0.5));
+}
+
+TEST_CASE("LTB text-align: right shifts to end",
+    "[ltb][text-align]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div style='width: 100px; text-align: right'>hi</div>",
+        "html, body, div { display: block; margin: 0; padding: 0; }");
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+    const DisplayItem* item = find_text_item(dl, "hi");
+    REQUIRE(item != nullptr);
+    // offset = 100 - 17.6 = 82.4.
+    REQUIRE(item->x == Approx(82.4f).epsilon(0.5));
+}
+
+TEST_CASE("LTB text-align: inherited from parent",
+    "[ltb][text-align]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div style='width: 100px; text-align: center'><p>hi</p></div>",
+        "html, body, div, p { display: block; margin: 0; padding: 0; }");
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+    const DisplayItem* item = find_text_item(dl, "hi");
+    REQUIRE(item != nullptr);
+    REQUIRE(item->x == Approx(41.2f).epsilon(0.5));
+}
+
+TEST_CASE("LTB text-align: two lines centered",
+    "[ltb][text-align]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div style='width: 100px; text-align: center'>aa<br>bb</div>",
+        "html, body, div { display: block; margin: 0; padding: 0; }");
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+    const DisplayItem* it_aa = find_text_item(dl, "aa");
+    const DisplayItem* it_bb = find_text_item(dl, "bb");
+    REQUIRE(it_aa != nullptr);
+    REQUIRE(it_bb != nullptr);
+    REQUIRE(it_aa->x == Approx(41.2f).epsilon(0.5));
+    REQUIRE(it_bb->x == Approx(41.2f).epsilon(0.5));
+}
+
+TEST_CASE("LTB text-align: justify acts as left on last line",
+    "[ltb][text-align]") {
+    // Однострочный текст — единственная строка является последней,
+    // поэтому justify = left.
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div style='width: 200px; text-align: justify'>hi</div>",
+        "html, body, div { display: block; margin: 0; padding: 0; }");
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+    const DisplayItem* item = find_text_item(dl, "hi");
+    REQUIRE(item != nullptr);
+    REQUIRE(item->x == Approx(0.0f).epsilon(0.5));
+}

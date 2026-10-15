@@ -11,6 +11,7 @@ namespace {
         case BoxType::Inline:         return "Inline";
         case BoxType::AnonymousBlock: return "AnonBlock";
         case BoxType::Text:           return "Text";
+        case BoxType::Image:          return "Image";
         }
         return "?";
     }

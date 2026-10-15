@@ -5,7 +5,8 @@
 
 enum class DisplayItemType : uint8_t {
     Rect,   // background / border
-    Text    // ��������� ���
+    Text,    // ��������� ���
+    Image
 };
 
 struct DisplayItem {
@@ -27,6 +28,8 @@ struct DisplayItem {
     bool  line_through{ false };
     bool  overline{ false };
     float letter_spacing{ 0.0f };
+    // Только для Image:
+    std::string image_path;
 };
 
 struct DisplayList {

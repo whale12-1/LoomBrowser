@@ -8,7 +8,8 @@ enum class BoxType {
     Block,
     Inline,
     AnonymousBlock,
-    Text
+    Text,
+    Image
 };
 
 struct LayoutGeometry {
@@ -47,5 +48,14 @@ struct LayoutNode {
     bool is_text()         const { return type == BoxType::Text; }
     bool is_anonymous()    const { return type == BoxType::AnonymousBlock; }
     bool is_block_level()  const { return type == BoxType::Block || type == BoxType::AnonymousBlock; }
-    bool is_inline_level() const { return type == BoxType::Inline || type == BoxType::Text; }
+    bool is_inline_level() const {
+        return type == BoxType::Inline
+            || type == BoxType::Text
+            || type == BoxType::Image;
+    }
+    // Только для BoxType::Image:
+    std::string image_src;              // путь к файлу (как в атрибуте src)
+    float intrinsic_width{ 0.0f };      // размеры исходного файла (0 = неизвестны)
+    float intrinsic_height{ 0.0f };
+
 };

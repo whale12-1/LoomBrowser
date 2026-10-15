@@ -70,7 +70,9 @@ private:
 
         // Background + borders — только для видимых real-element'ов.
         if (!node_hidden
-            && (node->type == BoxType::Block || node->type == BoxType::Inline)
+            && (node->type == BoxType::Block
+                || node->type == BoxType::Inline
+                || node->type == BoxType::Image)
             && node->style_soa_idx != UINT32_MAX)
         {
             const uint32_t si = node->style_soa_idx;
@@ -138,6 +140,20 @@ private:
             it.overline = (static_cast<uint8_t>(dec) & 2u) != 0u;
             it.line_through = (static_cast<uint8_t>(dec) & 4u) != 0u;
 
+            it.opacity = item_opacity;
+            out.items.push_back(std::move(it));
+        }
+
+        // Image — если узел видим и путь не пуст.
+        if (!node_hidden && node->type == BoxType::Image
+            && !node->image_src.empty()) {
+            DisplayItem it;
+            it.type = DisplayItemType::Image;
+            it.x = ax;
+            it.y = ay;
+            it.width = w;
+            it.height = h;
+            it.image_path = node->image_src;
             it.opacity = item_opacity;
             out.items.push_back(std::move(it));
         }

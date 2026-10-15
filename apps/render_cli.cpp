@@ -89,6 +89,36 @@ namespace {
 
         return tm;
     }
+    std::string resolve_path(const std::string& base_dir,
+        const std::string& src)
+    {
+        if (src.empty()) return {};
+        if (src.size() >= 2 && src[1] == ':') return src;
+        if (src[0] == '/' || src[0] == '\\') return src;
+        if (base_dir.empty()) return src;
+        std::string out = base_dir;
+        if (!out.empty() && out.back() != '/' && out.back() != '\\')
+            out += '/';
+        out += src;
+        return out;
+    }
+
+    LayoutTreeBuilder::ImageMetrics make_image_metrics(
+        const std::string& base_dir)
+    {
+        LayoutTreeBuilder::ImageMetrics m;
+        if (base_dir.empty()) return m;
+        m.intrinsic_size = [base_dir](const std::string& src)
+            -> std::pair<float, float>
+            {
+                const std::string path = resolve_path(base_dir, src);
+                QImage img;
+                if (!img.load(QString::fromStdString(path)))
+                    return { 0.0f, 0.0f };
+                return { float(img.width()), float(img.height()) };
+            };
+        return m;
+    }
 
 } // namespace
 
@@ -133,6 +163,14 @@ int main(int argc, char** argv) {
     const QString input_path = pos[0];
     const int vw = parser.value(widthOpt).toInt();
     const int vh = parser.value(heightOpt).toInt();
+
+    const std::string input_std = input_path.toStdString();
+    const size_t slash = input_std.find_last_of("/\\");
+    const std::string base_dir =
+        (slash == std::string::npos) ? "" : input_std.substr(0, slash);
+
+    std::cerr << "[diag] input_path = " << input_std << "\n";
+    std::cerr << "[diag] base_dir   = " << base_dir << "\n";
 
     if (vw <= 0 || vh <= 0) {
         std::cerr << "error: width and height must be positive\n";
@@ -185,7 +223,8 @@ int main(int argc, char** argv) {
 
     // 4. Layout
     std::cout << "[3/5] layout...\n";
-    auto layout = LayoutTreeBuilder::build(storage);
+    auto layout = LayoutTreeBuilder::build(storage,
+        make_image_metrics(base_dir));
     if (!layout) {
         std::cerr << "error: layout build failed\n";
         return 1;

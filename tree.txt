@@ -1,0 +1,14 @@
+[Block] soa=0 display=block position=static rect=(0,0 1024x167.844)
+  [Block] soa=1 display=block position=static rect=(0,0 1024x167.844)
+    [Block] soa=2 display=block position=static bg=#eeeeeeff rect=(0,0 1024x167.844) padding=(20,20,20,20)
+      [Block] soa=3 display=block position=static rect=(20,36 984x21.2812) margin=(16,0,16,0)
+        [AnonBlock] soa=� rect=(0,0 984x21.2812)
+          [Text] soa=� rect=(453.977,0 20.7812x21.2812) "По"
+          [Text] soa=� rect=(474.758,0 4.375x21.2812) " "
+          [Text] soa=� rect=(479.133,0 50.8906x21.2812) "центру"
+      [Block] soa=4 display=block position=static rect=(20,73.2812 984x21.2812) margin=(16,0,16,0)
+        [AnonBlock] soa=� rect=(0,0 984x21.2812)
+          [Text] soa=� rect=(930.703,0 53.2969x21.2812) "Справа"
+      [Block] soa=5 display=block position=static rect=(20,110.562 984x21.2812) margin=(16,0,16,0)
+        [AnonBlock] soa=� rect=(0,0 984x21.2812)
+          [Text] soa=� rect=(0,0 43.2969x21.2812) "Слева"

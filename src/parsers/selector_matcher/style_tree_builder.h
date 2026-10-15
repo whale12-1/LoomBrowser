@@ -388,6 +388,7 @@ private:
             {"font-weight",    P::FontWeight},
             {"font-style",     P::FontStyle},
             {"line-height",    P::LineHeight},
+            {"text-align",     P::TextAlign},
             {"text-decoration", P::TextDecoration},
             {"letter-spacing", P::LetterSpacing},
             {"white-space",    P::WhiteSpace},
@@ -444,6 +445,7 @@ private:
         case Prop::Visibility: storage.visibilities[idx] = parse_visibility(v); break;
         case Prop::BoxSizing: storage.box_sizings[idx] = parse_box_sizing(v); break;
         case Prop::TextDecoration: storage.text_decorations[idx] = parse_text_decoration(v); break;
+        case Prop::TextAlign:      storage.text_aligns[idx] = parse_text_align(v); break;
         case Prop::FontStyle: storage.font_styles[idx] = parse_font_style(v); break;
         case Prop::WhiteSpace: storage.white_spaces[idx] = parse_white_space(v); break;
         case Prop::FlexDirection: storage.flex_directions[idx] = parse_flex_dir(v); break;

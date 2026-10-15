@@ -7,7 +7,7 @@
 #include "parsers/selector_matcher/style_origin.h"
 #include "parsers/selector_matcher/display_list_builder.h"
 #include "layout/headers/layout_tree_builder.h"
-
+#include <QImage>
 #include <QRectF>
 #include <QDebug>
 #include <functional>
@@ -41,6 +41,36 @@ namespace {
         for (DOMNode* c : n->children)
             if (auto* e = firstElement(c)) return e;
         return nullptr;
+    }
+
+    std::string resolvePath(const std::string& base_dir,
+        const std::string& src) {
+        if (src.empty()) return {};
+        if (src.size() >= 2 && src[1] == ':') return src;        // Windows
+        if (src[0] == '/' || src[0] == '\\') return src;         // Unix/abs
+        if (base_dir.empty()) return src;
+        std::string out = base_dir;
+        if (!out.empty() && out.back() != '/' && out.back() != '\\')
+            out += '/';
+        out += src;
+        return out;
+    }
+
+    LayoutTreeBuilder::ImageMetrics makeImageMetrics(
+        const std::string& base_dir)
+    {
+        LayoutTreeBuilder::ImageMetrics m;
+        if (base_dir.empty()) return m;
+        m.intrinsic_size = [base_dir](const std::string& src)
+            -> std::pair<float, float>
+            {
+                const std::string path = resolvePath(base_dir, src);
+                QImage img;
+                if (!img.load(QString::fromStdString(path)))
+                    return { 0.0f, 0.0f };
+                return { float(img.width()), float(img.height()) };
+            };
+        return m;
     }
 
 } // namespace
@@ -159,7 +189,8 @@ void Page::rebuild() {
 
 
     // 3. Layout с текстовыми метриками (Qt или эвристика).
-    layout_ = LayoutTreeBuilder::build(storage_);
+    layout_ = LayoutTreeBuilder::build(storage_,
+        makeImageMetrics(base_dir_));
     if (layout_) {
         LayoutTreeBuilder::Viewport vp{ viewport_w_, viewport_h_ };
         LayoutTreeBuilder::compute_layout(layout_.get(), vp, storage_,

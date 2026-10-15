@@ -145,6 +145,13 @@ void BrowserCanvas::renderToBacking() {
             }
             break;
         }
+        case DisplayItemType::Image: {
+            if (item.image_path.empty()) break;
+            QImage img;
+            if (!img.load(QString::fromStdString(item.image_path))) break;
+            p.drawImage(QRectF(item.x, item.y, item.width, item.height), img);
+            break;
+        }
         }
         p.setOpacity(1.0);
     }
@@ -230,6 +237,13 @@ void BrowserCanvas::paintEvent(QPaintEvent* ev) {
                     p.drawLine(QPointF(item.x, line_through_y),
                         QPointF(item.x + item.width, line_through_y));
             }
+            break;
+        }
+        case DisplayItemType::Image: {
+            if (item.image_path.empty()) break;
+            QImage img;
+            if (!img.load(QString::fromStdString(item.image_path))) break;
+            p.drawImage(QRectF(item.x, item.y, item.width, item.height), img);
             break;
         }
         }

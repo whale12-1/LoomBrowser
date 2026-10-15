@@ -63,6 +63,9 @@ public:
         void* ctx);
     void collectAll(DOMNode* root, bool (*pred)(const DOMNode*, void*),
         void* ctx, std::vector<DOMNode*>& out);
+    // Ѕазова€ директори€ дл€ резолва относительных путей (src в <img>).
+// ѕуста€ Ч только абсолютные пути.
+    void setBaseDir(std::string dir) { base_dir_ = std::move(dir); }
 
 private:
     void runInlineScripts();
@@ -83,6 +86,6 @@ private:
 
     float viewport_w_ = 1024.0f;
     float viewport_h_ = 768.0f;
-
+    std::string base_dir_;
     LayoutTreeBuilder::TextMetrics text_metrics_;
 };

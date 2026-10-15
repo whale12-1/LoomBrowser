@@ -50,6 +50,8 @@ b, strong { font-weight: bold; }
 i, em     { font-style: italic; }
 small     { font-size: 0.83em; }
 sub, sup  { font-size: 0.83em; }
+/* Картинка по умолчанию не шире родителя (как принято в вебе). */
+img       { max-width: 100%; }
 a         { text-decoration: underline; }
 a[href]   { color: #0000EE; }
 )CSS";

@@ -7,7 +7,7 @@
 #include <QPointF>
 #include <QRectF>
 #include <QString>
-
+#include <QImage>
 #include <algorithm>
 
 namespace {
@@ -76,6 +76,16 @@ QImage DisplayListRenderer::render(const DisplayList& list,
             if (item.line_through)
                 p.drawLine(QPointF(item.x, line_through_y),
                     QPointF(item.x + item.width, line_through_y));
+            break;
+        }
+        case DisplayItemType::Image: {
+            if (item.image_path.empty()) break;
+            QImage img;
+            if (!img.load(QString::fromStdString(item.image_path))) {
+                // TODO: placeholder для ненайденных картинок.
+                break;
+            }
+            p.drawImage(QRectF(item.x, item.y, item.width, item.height), img);
             break;
         }
         }
