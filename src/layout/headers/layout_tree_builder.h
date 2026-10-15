@@ -11,6 +11,7 @@
 #include <algorithm>
 
 #include "layout_node.h"
+#include "float_context.h"
 #include "./parsers/selector_matcher/style_storage_soa.h"
 #include "./parsers/html_parser/headers/dom.h"
 
@@ -101,7 +102,10 @@ public:
         const float root_fs = storage.font_sizes.empty() ? 16.0f : storage.font_sizes[0];
 
         // 1. Flow-раскладка.
-        layout_node(root, viewport.width, viewport, storage, root_fs, metrics);
+                // 1. Flow-раскладка.
+        FloatContext root_fc;
+        layout_node(root, viewport.width, viewport, storage, root_fs, metrics,
+            root_fc);
 
         // 2. Пост-проход: сохранить flow_x/flow_y и применить relative.
         apply_position_offsets(root, viewport, storage, root_fs);
@@ -272,9 +276,10 @@ private:
             return node;
         }
 
-        // CSS 2.1 §9.7: position: absolute принудительно blockifies
-        // inline / inline-block в block-level.
-        if (storage.positions[soa_idx] == style::Position::Absolute) {
+        // CSS 2.1 §9.7: position: absolute и float: left/right
+        // принудительно blockifies inline / inline-block в block-level.
+        if (storage.positions[soa_idx] == style::Position::Absolute
+            || storage.floats[soa_idx] != style::Float::None) {
             if (node->type == BoxType::Inline) {
                 node->type = BoxType::Block;
             }
@@ -492,6 +497,14 @@ private:
         return storage.displays[node->style_soa_idx] == style::Display::Flex;
     }
 
+    // Определяет, является ли узел float'ом (left или right).
+    static bool is_float(const LayoutNode* node,
+        const StyleStorageSoA& storage)
+    {
+        if (!node || node->style_soa_idx == UINT32_MAX) return false;
+        return storage.floats[node->style_soa_idx] != style::Float::None;
+    }
+
     // =================================================================
     //  Flex-контейнер
     //
@@ -514,7 +527,8 @@ private:
         const Viewport& vp,
         const StyleStorageSoA& storage,
         float root_fs,
-        const TextMetrics& tm)
+        const TextMetrics& tm,
+        FloatContext& fc)
     {
         auto& g = node->geometry;
         resolve_box_model(node, storage, vp, parent_width, root_fs);
@@ -663,7 +677,7 @@ private:
             const float override_content_w = std::max(0.0f, it.outer_main - pb_h);
 
             layout_node(it.node, content_width, vp, storage, root_fs, tm,
-                override_content_w);
+                fc, override_content_w);
 
             it.cross_outer = it.node->geometry.height
                 + it.node->geometry.margin_top
@@ -814,24 +828,26 @@ private:
         const StyleStorageSoA& storage,
         float root_fs,
         const TextMetrics& tm,
+        FloatContext& fc,
         float override_content_width = -1.0f)
     {
         if (is_flex_container(node, storage)) {
-            layout_flex_container(node, parent_width, vp, storage, root_fs, tm);
+            layout_flex_container(node, parent_width, vp, storage, root_fs,
+                tm, fc);
             return;
         }
 
         switch (node->type) {
         case BoxType::AnonymousBlock:
-            layout_ifc(node, parent_width, vp, storage, root_fs, tm);
+            layout_ifc(node, parent_width, vp, storage, root_fs, tm, fc);
             node->geometry.width = parent_width;
             break;
         case BoxType::Block:
-            layout_block_container(node, parent_width, vp, storage, root_fs, tm,
-                override_content_width);
+            layout_block_container(node, parent_width, vp, storage, root_fs,
+                tm, fc, override_content_width);
             break;
         case BoxType::Inline:
-            layout_inline(node, parent_width, vp, storage, root_fs, tm);
+            layout_inline(node, parent_width, vp, storage, root_fs, tm, fc);
             break;
         case BoxType::Text:
             layout_text(node, parent_width, vp, storage, root_fs, tm);
@@ -1049,7 +1065,11 @@ private:
             y = node->geometry.flow_y;
         }
 
-        layout_block_container(node, computed_width, vp, storage, root_fs, tm);
+        // У absolute-элемента свой BFC — внутренний FloatContext
+// не связан с родительским.
+        FloatContext abs_fc;
+        layout_block_container(node, computed_width, vp, storage, root_fs,
+            tm, abs_fc);
 
         node->geometry.x = x;
         node->geometry.y = y;
@@ -1115,8 +1135,11 @@ private:
         const Viewport& vp,
         const StyleStorageSoA& storage,
         float root_fs,
-        const TextMetrics& tm)
+        const TextMetrics& tm,
+        FloatContext& fc)
     {
+        // fc не используется в подэтапе A. Обтекание текста — подэтап B.
+        (void)fc;
         auto& g = node->geometry;
 
         const float inner_x = g.border_left + g.padding_left;
@@ -1299,7 +1322,7 @@ private:
             };
 
         for (auto& child : node->children) {
-            layout_node(child.get(), avail, vp, storage, root_fs, tm);
+            layout_node(child.get(), avail, vp, storage, root_fs, tm,fc);
 
             if (is_br(child.get(), storage)) {
                 // <br> закрывает строку. Даже пустую — с высотой strut.
@@ -1380,6 +1403,91 @@ private:
     }
 
     // =================================================================
+//  Float (подэтап A).
+//
+//  Float выходит из нормального потока BFC:
+//    * позиционируется у левого/правого края content-box BFC,
+//    * несколько float'ов укладываются в ряд, если помещаются,
+//    * y_cursor BFC НЕ сдвигается (родитель не растягивается).
+//
+//  Внутренности float'а — отдельный BFC (inner_fc). Родительский
+//  FloatContext туда не проникает.
+//
+//  Координаты fx/fy — в системе content-box BFC (0,0 — верхний
+//  левый угол content-области). Позиция ребёнка — border-box;
+//  для margin-box left/top добавляем margin_left/margin_top.
+//
+//  TODO (B): обтекание текстом. Сейчас обычные блоки в BFC
+//            не сужаются от float'ов — они идут на всю ширину.
+//  TODO (C): clear: left/right/both. max_bottom() для autoheight
+//            родителя через overflow: hidden.
+// =================================================================
+    static void layout_float(LayoutNode* child,
+        float parent_width,
+        const Viewport& vp,
+        const StyleStorageSoA& storage,
+        float root_fs,
+        const TextMetrics& tm,
+        FloatContext& fc,
+        float inner_x, float inner_y,
+        float bfc_y_cursor)
+    {
+        // Внутренний BFC float'а.
+        FloatContext inner_fc;
+        layout_block_container(child, parent_width, vp, storage, root_fs, tm,
+            inner_fc);
+
+        const auto& g = child->geometry;
+        const float outer_w = g.margin_left + g.width + g.margin_right;
+        const float outer_h = g.margin_top + g.height + g.margin_bottom;
+
+        const bool is_left =
+            (storage.floats[child->style_soa_idx] == style::Float::Left);
+
+        // Ищем свободный слот на плоскости BFC.
+        float fy = bfc_y_cursor;
+        float fx = 0.0f;
+        constexpr int kMaxIterations = 64;
+        for (int it = 0; it < kMaxIterations; ++it) {
+            float avail_left = 0.0f;
+            float avail_right = parent_width;
+            fc.available_range(fy, parent_width, avail_left, avail_right);
+
+            if (is_left) {
+                fx = avail_left;
+                if (fx + outer_w <= avail_right) break;
+            }
+            else {
+                fx = avail_right - outer_w;
+                if (fx >= avail_left) break;
+            }
+
+            // Не влезает — минимальный bottom активного float'а, > fy.
+            float next_y = fy + outer_h;
+            for (const auto& f : fc.all()) {
+                if (f.bottom > fy && f.bottom < next_y) next_y = f.bottom;
+            }
+            if (next_y <= fy) break;   // защита от бесконечного цикла
+            fy = next_y;
+        }
+
+        // Регистрируем во FloatContext.
+        FloatContext::ActiveFloat af;
+        af.left = fx;
+        af.right = fx + outer_w;
+        af.top = fy;
+        af.bottom = fy + outer_h;
+        af.is_left = is_left;
+        fc.add(af);
+
+        // Позиция ребёнка в системе border-box родителя.
+        // fx/fy — левый-верхний угол margin-box float'а.
+        child->geometry.x = inner_x + fx + g.margin_left;
+        child->geometry.y = inner_y + fy + g.margin_top;
+
+        // y_cursor родителя НЕ увеличивается.
+    }
+    // =================================================================
     //  Block container — обычный BFC layout
     //
     //  FIX #2 (часть): новый параметр override_content_width. Если >= 0,
@@ -1392,6 +1500,7 @@ private:
         const StyleStorageSoA& storage,
         float root_fs,
         const TextMetrics& tm,
+        FloatContext& fc,
         float override_content_width = -1.0f)
     {
         auto& g = node->geometry;
@@ -1510,7 +1619,15 @@ private:
                 continue;
             }
 
-            layout_node(child.get(), content_width, vp, storage, root_fs, tm);
+            // Float: раскладываем в FloatContext, y_cursor не двигаем.
+            if (is_float(child.get(), storage)) {
+                layout_float(child.get(), content_width, vp, storage, root_fs,
+                    tm, fc, inner_x, inner_y, y_cursor);
+                continue;
+            }
+
+            layout_node(child.get(), content_width, vp, storage, root_fs, tm,
+                fc);
 
             const float cmt = child->geometry.margin_top;
             const float cmb = child->geometry.margin_bottom;
@@ -1585,11 +1702,12 @@ private:
         const Viewport& vp,
         const StyleStorageSoA& storage,
         float root_fs,
-        const TextMetrics& tm)
+        const TextMetrics& tm,
+        FloatContext& fc)
     {
         resolve_box_model(node, storage, vp, parent_width, root_fs);
 
-        layout_ifc(node, parent_width, vp, storage, root_fs, tm);
+        layout_ifc(node, parent_width, vp, storage, root_fs, tm, fc);
 
         auto& g = node->geometry;
         const uint32_t si = node->style_soa_idx;

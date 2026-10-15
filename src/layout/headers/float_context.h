@@ -93,6 +93,10 @@ public:
     bool   empty() const { return floats_.empty(); }
     size_t size()  const { return floats_.size(); }
 
+    // Read-only доступ дл€ итерации из layout_float: нужно найти
+    // минимальный bottom > fy среди активных float'ов.
+    const std::vector<ActiveFloat>& all() const { return floats_; }
+
     // ќпциональна€ оптимизаци€: удалить float'ы, которые уже закончились
     // выше y. ѕолезно при длинных BFC.
     void remove_ended_before(float y) {

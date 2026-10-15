@@ -2651,3 +2651,154 @@ TEST_CASE("FloatContext: clear() resets",
     REQUIRE(fc.empty());
     REQUIRE(fc.max_bottom() == 0.0f);
 }
+
+
+// ============================================================
+//  Этап A: float — blockification + размещение
+// ============================================================
+
+TEST_CASE("LTB float: inline element becomes Block",
+    "[ltb][float]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<span id='s' style='float: left; width: 100px'>x</span>",
+        "html, body, span { display: inline; }");
+
+    LayoutNode* s = find_by_soa_idx(p.root.get(), 2);
+    REQUIRE(s != nullptr);
+    REQUIRE(s->type == BoxType::Block);
+}
+
+TEST_CASE("LTB float: single left float at (0,0)",
+    "[ltb][float]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div class='bfc'>"
+        "  <div class='f'></div>"
+        "</div>",
+        "html, body { display: block; margin: 0; padding: 0; } "
+        ".bfc { display: block; width: 400px; } "
+        ".f   { float: left; width: 100px; height: 50px; }");
+
+    LayoutNode* bfc = find_by_soa_idx(p.root.get(), 2);
+    LayoutNode* f = find_by_soa_idx(p.root.get(), 3);
+    REQUIRE(bfc != nullptr);
+    REQUIRE(f != nullptr);
+
+    // float слева вверху
+    REQUIRE(f->geometry.x == Approx(0.0f).epsilon(0.01));
+    REQUIRE(f->geometry.y == Approx(0.0f).epsilon(0.01));
+    REQUIRE(f->geometry.width == Approx(100.0f).epsilon(0.01));
+    REQUIRE(f->geometry.height == Approx(50.0f).epsilon(0.01));
+
+    // Родитель НЕ растягивается от float'а.
+    REQUIRE(bfc->geometry.height == Approx(0.0f).epsilon(0.01));
+}
+
+TEST_CASE("LTB float: two left floats side by side",
+    "[ltb][float]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div class='bfc'>"
+        "  <div class='a'></div>"
+        "  <div class='b'></div>"
+        "</div>",
+        "html, body { display: block; margin: 0; padding: 0; } "
+        ".bfc { display: block; width: 400px; } "
+        ".a { float: left; width: 100px; height: 50px; } "
+        ".b { float: left; width: 100px; height: 50px; }");
+
+    LayoutNode* a = find_by_soa_idx(p.root.get(), 3);
+    LayoutNode* b = find_by_soa_idx(p.root.get(), 4);
+    REQUIRE(a != nullptr);
+    REQUIRE(b != nullptr);
+
+    REQUIRE(a->geometry.x == Approx(0.0f).epsilon(0.01));
+    REQUIRE(a->geometry.y == Approx(0.0f).epsilon(0.01));
+    REQUIRE(b->geometry.x == Approx(100.0f).epsilon(0.01));
+    REQUIRE(b->geometry.y == Approx(0.0f).epsilon(0.01));
+}
+
+TEST_CASE("LTB float: too-wide second float wraps to next row",
+    "[ltb][float]") {
+    // Контейнер 200, два float'а по 150 → второй переносится вниз.
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div class='bfc'>"
+        "  <div class='a'></div>"
+        "  <div class='b'></div>"
+        "</div>",
+        "html, body { display: block; margin: 0; padding: 0; } "
+        ".bfc { display: block; width: 200px; } "
+        ".a { float: left; width: 150px; height: 50px; } "
+        ".b { float: left; width: 150px; height: 50px; }");
+
+    LayoutNode* a = find_by_soa_idx(p.root.get(), 3);
+    LayoutNode* b = find_by_soa_idx(p.root.get(), 4);
+    REQUIRE(a->geometry.x == Approx(0.0f).epsilon(0.01));
+    REQUIRE(a->geometry.y == Approx(0.0f).epsilon(0.01));
+    REQUIRE(b->geometry.x == Approx(0.0f).epsilon(0.01));
+    REQUIRE(b->geometry.y == Approx(50.0f).epsilon(0.01));
+}
+
+TEST_CASE("LTB float: right float at right edge",
+    "[ltb][float]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div class='bfc'>"
+        "  <div class='f'></div>"
+        "</div>",
+        "html, body { display: block; margin: 0; padding: 0; } "
+        ".bfc { display: block; width: 400px; } "
+        ".f   { float: right; width: 100px; height: 50px; }");
+
+    LayoutNode* f = find_by_soa_idx(p.root.get(), 3);
+    REQUIRE(f->geometry.x == Approx(300.0f).epsilon(0.01));
+    REQUIRE(f->geometry.y == Approx(0.0f).epsilon(0.01));
+}
+
+TEST_CASE("LTB float: left and right floats coexist on one row",
+    "[ltb][float]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div class='bfc'>"
+        "  <div class='l'></div>"
+        "  <div class='r'></div>"
+        "</div>",
+        "html, body { display: block; margin: 0; padding: 0; } "
+        ".bfc { display: block; width: 400px; } "
+        ".l { float: left;  width: 100px; height: 50px; } "
+        ".r { float: right; width: 100px; height: 50px; }");
+
+    LayoutNode* l = find_by_soa_idx(p.root.get(), 3);
+    LayoutNode* r = find_by_soa_idx(p.root.get(), 4);
+    REQUIRE(l->geometry.x == Approx(0.0f).epsilon(0.01));
+    REQUIRE(r->geometry.x == Approx(300.0f).epsilon(0.01));
+    REQUIRE(l->geometry.y == Approx(0.0f).epsilon(0.01));
+    REQUIRE(r->geometry.y == Approx(0.0f).epsilon(0.01));
+}
+
+TEST_CASE("LTB float: float does not push following block down",
+    "[ltb][float]") {
+    // Пока без обтекания: обычный блок идёт с y_cursor = 0,
+    // накладываясь на float. Подэтап B починит.
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div class='bfc'>"
+        "  <div class='f'></div>"
+        "  <div class='plain'></div>"
+        "</div>",
+        "html, body { display: block; margin: 0; padding: 0; } "
+        ".bfc   { display: block; width: 400px; } "
+        ".f     { float: left; width: 100px; height: 50px; } "
+        ".plain { display: block; width: 100px; height: 20px; }");
+
+    LayoutNode* f = find_by_soa_idx(p.root.get(), 3);
+    LayoutNode* plain = find_by_soa_idx(p.root.get(), 4);
+    REQUIRE(f != nullptr);
+    REQUIRE(plain != nullptr);
+
+    REQUIRE(f->geometry.y == Approx(0.0f).epsilon(0.01));
+    // Обычный блок остаётся на y_cursor = 0 (float его не сдвинул).
+    REQUIRE(plain->geometry.y == Approx(0.0f).epsilon(0.01));
+}
