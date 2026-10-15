@@ -94,6 +94,7 @@ void BrowserCanvas::renderToBacking() {
 
     // Тот же цикл, что был в старом paintEvent.
     for (const auto& item : list_.items) {
+        p.setOpacity(item.opacity);
         const QColor color(int((item.color >> 24) & 0xFF),
             int((item.color >> 16) & 0xFF),
             int((item.color >> 8) & 0xFF),
@@ -145,6 +146,7 @@ void BrowserCanvas::renderToBacking() {
             break;
         }
         }
+        p.setOpacity(1.0);
     }
 }
 
@@ -179,6 +181,7 @@ void BrowserCanvas::paintEvent(QPaintEvent* ev) {
     p.setClipRect(ev->rect());
 
     for (const auto& item : list_.items) {
+        p.setOpacity(item.opacity);
         const QColor color(int((item.color >> 24) & 0xFF),
             int((item.color >> 16) & 0xFF),
             int((item.color >> 8) & 0xFF),
@@ -230,6 +233,7 @@ void BrowserCanvas::paintEvent(QPaintEvent* ev) {
             break;
         }
         }
+        p.setOpacity(1.0);
     }
 }
 void BrowserCanvas::mousePressEvent(QMouseEvent* ev) {

@@ -33,6 +33,8 @@ private:
         const float ay = oy + node->geometry.y;
         const float w = node->geometry.width;
         const float h = node->geometry.height;
+
+        // <br> — нет своего бокса, но обход детей продолжаем.
         if (node->style_soa_idx != UINT32_MAX) {
             const DOMNode* dom = storage.dom_nodes[node->style_soa_idx];
             if (dom && std::string_view(dom->tag_name.data(), dom->tag_name.size()) == "br") {
@@ -42,23 +44,48 @@ private:
             }
         }
 
-        // Background + borders � ������ � �������� Element-�����.
-        if ((node->type == BoxType::Block || node->type == BoxType::Inline)
+        // ---- Visibility и opacity ----
+        // visibility наследуется, поэтому для Text берём эффективный
+        // style_soa_idx (придёт от родителя).
+        // opacity не наследуется как свойство каскада; но для Text
+        // также используем effective — так текст визуально тускнеет
+        // внутри родителя с opacity < 1. Композитинг не реализован,
+        // это компромисс (TODO).
+        bool node_hidden = false;
+        float item_opacity = 1.0f;
+        {
+            const uint32_t si_eff =
+                (node->style_soa_idx != UINT32_MAX)
+                ? node->style_soa_idx
+                : (node->type == BoxType::Text)
+                ? effective_style_idx(node)
+                : UINT32_MAX;
+            if (si_eff != UINT32_MAX) {
+                const auto vis = storage.visibilities[si_eff];
+                node_hidden = (vis == style::Visibility::Hidden
+                    || vis == style::Visibility::Collapse);
+                item_opacity = storage.opacity_q[si_eff] / 255.0f;
+            }
+        }
+
+        // Background + borders — только для видимых real-element'ов.
+        if (!node_hidden
+            && (node->type == BoxType::Block || node->type == BoxType::Inline)
             && node->style_soa_idx != UINT32_MAX)
         {
             const uint32_t si = node->style_soa_idx;
 
             const uint32_t bg = storage.background_colors[si];
-            if ((bg & 0xFFu) != 0u) {  // alpha > 0
+            if ((bg & 0xFFu) != 0u) {
                 DisplayItem it;
                 it.type = DisplayItemType::Rect;
                 it.x = ax; it.y = ay; it.width = w; it.height = h;
                 it.color = bg;
+                it.opacity = item_opacity;
                 out.items.push_back(std::move(it));
             }
 
             const auto& g = node->geometry;
-
             const uint32_t top_color = storage.border_top_colors[si];
             const uint32_t right_color = storage.border_right_colors[si];
             const uint32_t bottom_color = storage.border_bottom_colors[si];
@@ -66,12 +93,12 @@ private:
 
             auto push_border = [&](float bx, float by, float bw, float bh,
                 uint32_t color) {
-                    // Alpha == 0 → граница невидима (transparent).
                     if ((color & 0xFFu) == 0u) return;
                     DisplayItem bi;
                     bi.type = DisplayItemType::Rect;
                     bi.x = bx; bi.y = by; bi.width = bw; bi.height = bh;
                     bi.color = color;
+                    bi.opacity = item_opacity;
                     out.items.push_back(std::move(bi));
                 };
 
@@ -87,8 +114,8 @@ private:
                     g.border_right, h, right_color);
         }
 
-        // �����.
-        if (node->type == BoxType::Text) {
+        // Text — только если узел видим.
+        if (!node_hidden && node->type == BoxType::Text) {
             const uint32_t si = effective_style_idx(node);
             DisplayItem it;
             it.type = DisplayItemType::Text;
@@ -111,6 +138,7 @@ private:
             it.overline = (static_cast<uint8_t>(dec) & 2u) != 0u;
             it.line_through = (static_cast<uint8_t>(dec) & 4u) != 0u;
 
+            it.opacity = item_opacity;
             out.items.push_back(std::move(it));
         }
 

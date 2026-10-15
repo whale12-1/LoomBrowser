@@ -36,6 +36,7 @@ QImage DisplayListRenderer::render(const DisplayList& list,
     p.setRenderHint(QPainter::SmoothPixmapTransform, false);
 
     for (const auto& item : list.items) {
+        p.setOpacity(item.opacity);
         switch (item.type) {
         case DisplayItemType::Rect: {
             const QColor c = QColor::fromRgba(css_to_qt(item.color));
@@ -78,6 +79,11 @@ QImage DisplayListRenderer::render(const DisplayList& list,
             break;
         }
         }
+        // TODO: opacity применяется поштучно. Вложенные элементы с
+        // opacity < 1 не композируются (родитель 0.5 × ребёнок 1.0
+        // должен давать 0.5, а не 1.0). Правильный stacking context
+        // — отдельная задача.
+        p.setOpacity(1.0);
     }
 
     p.end();   // �����������: ��������� QImage �� save()

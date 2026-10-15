@@ -1746,3 +1746,118 @@ TEST_CASE("LTB integration: <hr> border is gray",
     }
     REQUIRE(found_gray);
 }
+
+
+
+// ============================================================
+//  Этап 5: visibility: hidden + opacity
+// ============================================================
+
+TEST_CASE("LTB visibility: hidden skips own paint",
+    "[ltb][visibility]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div style='visibility: hidden; background-color: red;"
+        "            width: 50px; height: 50px'></div>",
+        "html, body, div { display: block; margin: 0; padding: 0; }");
+
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+
+    // Ни одного красного rect быть не должно.
+    for (const auto& it : dl.items) {
+        if (it.type == DisplayItemType::Rect)
+            REQUIRE(it.color != 0xFF0000FFu);
+    }
+}
+
+TEST_CASE("LTB visibility: hidden still lays out children",
+    "[ltb][visibility]") {
+    // visibility: hidden не убирает из layout (в отличие от display: none).
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div style='visibility: hidden; height: 40px'></div>",
+        "html, body, div { display: block; margin: 0; padding: 0; }");
+
+    LayoutNode* body = child_of_type(p.root.get(), BoxType::Block);
+    REQUIRE(body != nullptr);
+    LayoutNode* div = child_of_type(body, BoxType::Block);
+    REQUIRE(div != nullptr);
+    REQUIRE(div->geometry.height == 40.0f);
+}
+
+TEST_CASE("LTB visibility: visible child inside hidden parent",
+    "[ltb][visibility]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div style='visibility: hidden; background-color: red;"
+        "            width: 100px; height: 100px'>"
+        "  <span style='visibility: visible; background-color: blue;"
+        "               display: inline-block; width: 10px; height: 10px'></span>"
+        "</div>",
+        "html, body, div { display: block; margin: 0; padding: 0; }");
+
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+
+    bool has_red = false, has_blue = false;
+    for (const auto& it : dl.items) {
+        if (it.type != DisplayItemType::Rect) continue;
+        if (it.color == 0xFF0000FFu) has_red = true;
+        if (it.color == 0x0000FFFFu) has_blue = true;
+    }
+    REQUIRE_FALSE(has_red);
+    REQUIRE(has_blue);
+}
+
+TEST_CASE("LTB opacity: carried to DisplayItem",
+    "[ltb][opacity]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<span style='opacity: 0.5'>x</span>",
+        "html, body, span { display: inline; }");
+
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+    const DisplayItem* item = find_text_item(dl, "x");
+    REQUIRE(item != nullptr);
+    REQUIRE(item->opacity == Approx(0.5f).epsilon(0.01));
+}
+
+TEST_CASE("LTB opacity: zero carried to DisplayItem",
+    "[ltb][opacity]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<span style='opacity: 0'>x</span>",
+        "html, body, span { display: inline; }");
+
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+    const DisplayItem* item = find_text_item(dl, "x");
+    REQUIRE(item != nullptr);
+    REQUIRE(item->opacity == Approx(0.0f).epsilon(0.01));
+}
+
+TEST_CASE("LTB opacity: default is 1.0",
+    "[ltb][opacity]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<span>x</span>",
+        "html, body, span { display: inline; }");
+
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+    const DisplayItem* item = find_text_item(dl, "x");
+    REQUIRE(item != nullptr);
+    REQUIRE(item->opacity == Approx(1.0f).epsilon(0.01));
+}
+
+TEST_CASE("LTB opacity: not inherited",
+    "[ltb][opacity]") {
+    // opacity не наследуется: у span'а свой opacity_q = 255 (default),
+    // даже если у div'а 0.5.
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div style='opacity: 0.5'><span>x</span></div>",
+        "html, body, div { display: block; } span { display: inline; }");
+
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+    const DisplayItem* item = find_text_item(dl, "x");
+    REQUIRE(item != nullptr);
+    REQUIRE(item->opacity == Approx(1.0f).epsilon(0.01));
+}
