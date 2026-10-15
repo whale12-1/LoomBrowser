@@ -12,6 +12,7 @@
 #include "../parsers/html_parser/headers/html_parser.h"
 #include "../parsers/css_parser/headers/css_parser.h"
 #include "../parsers/selector_matcher/user_agent_stylesheet.h"
+#include "../layout/headers/float_context.h"
 
 namespace {
 
@@ -2525,4 +2526,128 @@ TEST_CASE("LTB vertical-align: property parsed from inline style",
     const uint32_t span_idx = 2;
     REQUIRE(p.storage.vertical_aligns[span_idx]
         == style::VerticalAlign::Middle);
+}
+
+
+// ============================================================
+//  FloatContext — чистая геометрия активных float'ов
+// ============================================================
+
+
+TEST_CASE("FloatContext: empty — full range",
+    "[float][context]") {
+    FloatContext fc;
+    float l, r;
+    fc.available_range(50.0f, 800.0f, l, r);
+    REQUIRE(l == 0.0f);
+    REQUIRE(r == 800.0f);
+}
+
+TEST_CASE("FloatContext: left float trims from left",
+    "[float][context]") {
+    FloatContext fc;
+    fc.add({ 0.0f, 100.0f, 10.0f, 60.0f, /*is_left=*/true });
+    float l, r;
+
+    // Внутри вертикального диапазона
+    fc.available_range(30.0f, 800.0f, l, r);
+    REQUIRE(l == 100.0f);
+    REQUIRE(r == 800.0f);
+
+    // Выше — полная ширина
+    fc.available_range(5.0f, 800.0f, l, r);
+    REQUIRE(l == 0.0f);
+    REQUIRE(r == 800.0f);
+
+    // На нижней границе (bottom полуоткрытый) — float уже не активен
+    fc.available_range(60.0f, 800.0f, l, r);
+    REQUIRE(l == 0.0f);
+    REQUIRE(r == 800.0f);
+}
+
+TEST_CASE("FloatContext: right float trims from right",
+    "[float][context]") {
+    FloatContext fc;
+    fc.add({ 700.0f, 800.0f, 0.0f, 100.0f, /*is_left=*/false });
+    float l, r;
+    fc.available_range(50.0f, 800.0f, l, r);
+    REQUIRE(l == 0.0f);
+    REQUIRE(r == 700.0f);
+}
+
+TEST_CASE("FloatContext: left + right floats both trim",
+    "[float][context]") {
+    FloatContext fc;
+    fc.add({ 0.0f,   100.0f, 0.0f, 100.0f, true });
+    fc.add({ 700.0f, 800.0f, 0.0f, 100.0f, false });
+    float l, r;
+    fc.available_range(50.0f, 800.0f, l, r);
+    REQUIRE(l == 100.0f);
+    REQUIRE(r == 700.0f);
+}
+
+TEST_CASE("FloatContext: stacked left floats narrow the same side",
+    "[float][context]") {
+    // Два левых float'а — на одной y они не могут быть (их бы
+    // уложило друг за другом), но available_range берёт max.
+    // Проверяем чисто функцию: right = max правой границы.
+    FloatContext fc;
+    fc.add({ 0.0f, 50.0f,   0.0f, 100.0f, true });
+    fc.add({ 0.0f, 120.0f, 40.0f, 100.0f, true });
+    float l, r;
+    fc.available_range(60.0f, 800.0f, l, r);
+    REQUIRE(l == 120.0f);   // max(50, 120)
+    REQUIRE(r == 800.0f);
+}
+
+TEST_CASE("FloatContext: clear_y takes max bottom of matching floats",
+    "[float][context]") {
+    FloatContext fc;
+    fc.add({ 0.0f,   100.0f, 0.0f, 50.0f,  true });
+    fc.add({ 0.0f,   100.0f, 0.0f, 80.0f,  true });
+    fc.add({ 700.0f, 800.0f, 0.0f, 200.0f, false });
+
+    // clear: left — обойти только левые
+    REQUIRE(fc.clear_y(/*clear_left=*/true,  /*clear_right=*/false, 0.0f) == 80.0f);
+    // clear: right — обойти правые
+    REQUIRE(fc.clear_y(false, true, 0.0f) == 200.0f);
+    // clear: both — max из двух
+    REQUIRE(fc.clear_y(true, true, 0.0f) == 200.0f);
+    // from_y уже больше — не сдвигает
+    REQUIRE(fc.clear_y(true, true, 500.0f) == 500.0f);
+}
+
+TEST_CASE("FloatContext: remove_ended_before drops old floats",
+    "[float][context]") {
+    FloatContext fc;
+    fc.add({ 0.0f, 100.0f, 0.0f, 50.0f,  true });
+    fc.add({ 0.0f, 100.0f, 0.0f, 200.0f, true });
+    REQUIRE(fc.size() == 2);
+
+    fc.remove_ended_before(100.0f);
+    REQUIRE(fc.size() == 1);
+
+    float l, r;
+    fc.available_range(150.0f, 800.0f, l, r);
+    REQUIRE(l == 100.0f);   // второй float ещё активен
+}
+
+TEST_CASE("FloatContext: max_bottom",
+    "[float][context]") {
+    FloatContext fc;
+    REQUIRE(fc.max_bottom() == 0.0f);
+
+    fc.add({ 0.0f, 100.0f, 0.0f, 50.0f,  true });
+    fc.add({ 0.0f, 100.0f, 0.0f, 150.0f, true });
+    REQUIRE(fc.max_bottom() == 150.0f);
+}
+
+TEST_CASE("FloatContext: clear() resets",
+    "[float][context]") {
+    FloatContext fc;
+    fc.add({ 0.0f, 100.0f, 0.0f, 50.0f, true });
+    REQUIRE_FALSE(fc.empty());
+    fc.clear();
+    REQUIRE(fc.empty());
+    REQUIRE(fc.max_bottom() == 0.0f);
 }
