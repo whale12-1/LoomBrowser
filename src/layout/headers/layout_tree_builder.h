@@ -1154,9 +1154,10 @@ private:
 
         struct LineItem {
             LayoutNode* node;
-            float width;    // outer width (margin-box), для подсчёта line_x
+            float width;
             float ascent;
             float descent;
+            style::VerticalAlign va;   // vertical-align для y-позиции
         };
         std::vector<LineItem> line;
 
@@ -1207,8 +1208,38 @@ private:
                         float acc = 0.0f;
                         for (auto& it : line) {
                             it.node->geometry.x += inner_x + acc;
-                            it.node->geometry.y =
-                                inner_y + line_top_y + (ma - it.ascent);
+                            // y — по vertical-align ребёнка.
+                            {
+                                const float baseline_y = line_top_y + ma;
+                                float y;
+                                switch (it.va) {
+                                case style::VerticalAlign::Top:
+                                    y = line_top_y + it.node->geometry.margin_top;
+                                    break;
+                                case style::VerticalAlign::Bottom:
+                                    y = line_top_y + line_h
+                                        - it.node->geometry.height
+                                        - it.node->geometry.margin_bottom;
+                                    break;
+                                case style::VerticalAlign::Middle: {
+                                    const float x_half = strut_fs * 0.25f;
+                                    y = baseline_y - x_half
+                                        - it.node->geometry.height * 0.5f;
+                                    break;
+                                }
+                                case style::VerticalAlign::TextTop:
+                                    y = baseline_y - strut_asc;
+                                    break;
+                                case style::VerticalAlign::TextBottom:
+                                    y = baseline_y + strut_desc
+                                        - it.node->geometry.height;
+                                    break;
+                                default: // Baseline
+                                    y = baseline_y - it.ascent;
+                                    break;
+                                }
+                                it.node->geometry.y = inner_y + y;
+                            }
                             if (it.node->type == BoxType::Text
                                 && it.node->text_content == " ") {
                                 it.node->geometry.width += per_space;
@@ -1224,8 +1255,35 @@ private:
                 if (offset < 0.0f) offset = 0.0f;
                 for (auto& it : line) {
                     it.node->geometry.x += inner_x + offset;
-                    it.node->geometry.y =
-                        inner_y + line_top_y + (ma - it.ascent);
+                    const float baseline_y = line_top_y + ma;
+                    float y;
+                    switch (it.va) {
+                    case style::VerticalAlign::Top:
+                        y = line_top_y + it.node->geometry.margin_top;
+                        break;
+                    case style::VerticalAlign::Bottom:
+                        y = line_top_y + line_h
+                            - it.node->geometry.height
+                            - it.node->geometry.margin_bottom;
+                        break;
+                    case style::VerticalAlign::Middle: {
+                        const float x_half = strut_fs * 0.25f;
+                        y = baseline_y - x_half
+                            - it.node->geometry.height * 0.5f;
+                        break;
+                    }
+                    case style::VerticalAlign::TextTop:
+                        y = baseline_y - strut_asc;
+                        break;
+                    case style::VerticalAlign::TextBottom:
+                        y = baseline_y + strut_desc
+                            - it.node->geometry.height;
+                        break;
+                    default: // Baseline
+                        y = baseline_y - it.ascent;
+                        break;
+                    }
+                    it.node->geometry.y = inner_y + y;
                 }
             }
 
@@ -1293,7 +1351,11 @@ private:
             // y — тоже временный; уточняется при flush.
             child->geometry.y = inner_y + line_top_y;
 
-            line.push_back({ child.get(), w, cba, cbd });
+            style::VerticalAlign va = style::VerticalAlign::Baseline;
+            if (child->style_soa_idx != UINT32_MAX) {
+                va = storage.vertical_aligns[child->style_soa_idx];
+            }
+            line.push_back({ child.get(), w, cba, cbd, va });
             line_x += w;
             line_max_ascent = std::max(line_max_ascent, cba);
             line_max_descent = std::max(line_max_descent, cbd);

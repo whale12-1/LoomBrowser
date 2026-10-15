@@ -30,6 +30,18 @@ namespace style {
     enum class Justify : uint8_t { Start, End, Center, SpaceBetween, SpaceAround, SpaceEvenly };
     enum class AlignItems : uint8_t { Stretch, FlexStart, FlexEnd, Center, Baseline };
 
+    // CSS vertical-align (CSS 2.1 §10.8.1). Применяется к inline-уровневым
+    // детям в IFC. Не наследуется.
+    // Не реализованы (TODO): sub, super, <length>, <percent>.
+    enum class VerticalAlign : uint8_t {
+        Baseline,     // default
+        Middle,
+        Top,
+        Bottom,
+        TextTop,
+        TextBottom,
+    };
+
     // ---- ������������� CSS-��������. ������������ � ������� ������� ----
     enum class Prop : uint16_t {
         Display, Position, Float, Overflow, Visibility, BoxSizing, ZIndex, Opacity,
@@ -42,6 +54,7 @@ namespace style {
         PaddingTop, PaddingRight, PaddingBottom, PaddingLeft,
         BorderTopWidth, BorderRightWidth, BorderBottomWidth, BorderLeftWidth,
         BorderTopColor, BorderRightColor, BorderBottomColor, BorderLeftColor,
+        VerticalAlign,
         FlexDirection, JustifyContent, AlignItems, FlexGrow, FlexShrink, FlexBasis,
         COUNT
     };

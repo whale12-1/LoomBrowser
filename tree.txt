@@ -1,3 +1,30 @@
-[Block] soa=0 display=block position=static rect=(0,0 1024x200)
-  [Block] soa=1 display=block position=static rect=(0,0 1024x200)
-    [Block] soa=2 display=block position=static bg=#eeeeeeff rect=(0,0 300x200)
+[Block] soa=0 display=block position=static rect=(0,0 1024x256.062)
+  [Block] soa=1 display=block position=static rect=(0,16 1024x224.062) margin=(16,0,16,0)
+    [Block] soa=2 display=block position=static rect=(0,0 1024x44.0156) margin=(16,0,16,0)
+      [AnonBlock] soa=ó rect=(0,0 1024x44.0156)
+        [Text] soa=ó rect=(0,22.7344 38.6406x21.2812) "–¢–µ–∫—Å—Ç"
+        [Text] soa=ó rect=(38.6406,22.7344 4.375x21.2812) " "
+        [Image] soa=3 display=inline position=static rect=(43.0156,0 40x40)
+        [Text] soa=ó rect=(83.0156,22.7344 4.375x21.2812) " "
+        [Text] soa=ó rect=(87.3906,22.7344 57.8438x21.2812) "baseline"
+    [Block] soa=4 display=block position=static rect=(0,60.0156 1024x44.0156) margin=(16,0,16,0)
+      [AnonBlock] soa=ó rect=(0,0 1024x44.0156)
+        [Text] soa=ó rect=(0,22.7344 38.6406x21.2812) "–¢–µ–∫—Å—Ç"
+        [Text] soa=ó rect=(38.6406,22.7344 4.375x21.2812) " "
+        [Image] soa=5 display=inline position=static rect=(43.0156,16 40x40)
+        [Text] soa=ó rect=(83.0156,22.7344 4.375x21.2812) " "
+        [Text] soa=ó rect=(87.3906,22.7344 48.7344x21.2812) "middle"
+    [Block] soa=6 display=block position=static rect=(0,120.031 1024x44.0156) margin=(16,0,16,0)
+      [AnonBlock] soa=ó rect=(0,0 1024x44.0156)
+        [Text] soa=ó rect=(0,22.7344 38.6406x21.2812) "–¢–µ–∫—Å—Ç"
+        [Text] soa=ó rect=(38.6406,22.7344 4.375x21.2812) " "
+        [Image] soa=7 display=inline position=static rect=(43.0156,0 40x40)
+        [Text] soa=ó rect=(83.0156,22.7344 4.375x21.2812) " "
+        [Text] soa=ó rect=(87.3906,22.7344 24.2031x21.2812) "top"
+    [Block] soa=8 display=block position=static rect=(0,180.047 1024x44.0156) margin=(16,0,16,0)
+      [AnonBlock] soa=ó rect=(0,0 1024x44.0156)
+        [Text] soa=ó rect=(0,22.7344 38.6406x21.2812) "–¢–µ–∫—Å—Ç"
+        [Text] soa=ó rect=(38.6406,22.7344 4.375x21.2812) " "
+        [Image] soa=9 display=inline position=static rect=(43.0156,4.01562 40x40)
+        [Text] soa=ó rect=(83.0156,22.7344 4.375x21.2812) " "
+        [Text] soa=ó rect=(87.3906,22.7344 52.7812x21.2812) "bottom"

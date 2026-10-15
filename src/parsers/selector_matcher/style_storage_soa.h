@@ -11,6 +11,7 @@ using style::Position;  using style::Float;
 using style::Overflow; using style::Visibility; using style::BoxSizing;
 using style::TextAlign; using style::FontStyle; using style::WhiteSpace;
 using style::FlexDir;  using style::Justify;    using style::AlignItems;
+using style::VerticalAlign;
 using style::Length;   using style::Unit;       using style::Color;
 using style::Prop;     using style::PROP_MASK_WORDS;
 
@@ -44,6 +45,7 @@ struct StyleStorageSoA {
     std::vector<FlexDir>    flex_directions;
     std::vector<Justify>    justify_contents;
     std::vector<AlignItems> align_items;
+    std::vector<VerticalAlign> vertical_aligns;
 
     std::vector<uint16_t>   font_weights;         // 100..900
     std::vector<uint8_t>    opacity_q;            // opacity * 255
@@ -103,6 +105,7 @@ struct StyleStorageSoA {
         flex_directions.push_back(FlexDir::Row);
         justify_contents.push_back(Justify::Start);
         align_items.push_back(AlignItems::Stretch);
+        vertical_aligns.push_back(VerticalAlign::Baseline);
 
         font_weights.push_back(400);
         opacity_q.push_back(255);

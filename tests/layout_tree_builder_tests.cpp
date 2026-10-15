@@ -2382,3 +2382,147 @@ TEST_CASE("LTB background-image: painted above background-color",
     REQUIRE(img_idx >= 0);
     REQUIRE(img_idx > red_idx);
 }
+
+
+// ============================================================
+//  Этап 9: vertical-align
+// ============================================================
+
+TEST_CASE("LTB vertical-align: baseline is default",
+    "[ltb][vertical-align]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<p>a<span style='font-size: 32px'>B</span>c</p>",
+        "html, body, p { display: block; margin: 0; padding: 0; }");
+    LayoutNode* body = child_of_type(p.root.get(), BoxType::Block);
+    LayoutNode* para = child_of_type(body, BoxType::Block);
+    LayoutNode* anon = child_of_type(para, BoxType::AnonymousBlock);
+    REQUIRE(anon != nullptr);
+
+    LayoutNode* a = nullptr;
+    LayoutNode* B = nullptr;
+    for (auto& c : anon->children) {
+        if (c->type == BoxType::Text && c->text_content == "a") a = c.get();
+    }
+    // B лежит внутри <span> → anon → span → anon → text
+    LayoutNode* span = child_of_type(anon, BoxType::Inline);
+    REQUIRE(span != nullptr);
+
+    LayoutNode* text_B = first_text_deep(span);
+    REQUIRE(text_B != nullptr);
+
+    // baseline-выравнивание: baseline(B) == baseline(a) == baseline(c)
+    const float a_base = a->geometry.y + a->geometry.baseline_ascent;
+    const float B_base =
+        span->geometry.y + span->geometry.baseline_ascent;
+    REQUIRE(a_base == Approx(B_base).epsilon(0.5));
+}
+
+TEST_CASE("LTB vertical-align: middle centers image on text line",
+    "[ltb][vertical-align]") {
+    // Картинка 40px с vertical-align:middle должна "висеть" на середине
+    // строки, а не сидеть на baseline.
+    ArenaAllocator arena;
+    auto p = run_pipeline_img(arena,
+        "<p>text<img src='test.png' "
+        "style='width: 20px; height: 40px; vertical-align: middle'></p>",
+        "html, body, p { display: block; margin: 0; padding: 0; }",
+        dummy_img_metrics());
+
+    LayoutNode* body = child_of_type(p.root.get(), BoxType::Block);
+    LayoutNode* para = child_of_type(body, BoxType::Block);
+    LayoutNode* anon = child_of_type(para, BoxType::AnonymousBlock);
+    REQUIRE(anon != nullptr);
+
+    LayoutNode* img = nullptr;
+    for (auto& c : anon->children)
+        if (c->type == BoxType::Image) { img = c.get(); break; }
+    REQUIRE(img != nullptr);
+
+    // При baseline низ картинки был бы на baseline. При middle картинка
+    // сдвинута вверх. Проверяем, что верх картинки выше верхней грани
+    // строки, то есть картинка реально ушла вверх от baseline.
+    REQUIRE(img->geometry.y > 0.0f);
+    const float img_center = img->geometry.y + img->geometry.height * 0.5f;
+    REQUIRE(img_center == Approx(36.0f).epsilon(1.0));
+
+}
+
+TEST_CASE("LTB vertical-align: top aligns to line top",
+    "[ltb][vertical-align]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline_img(arena,
+        "<p>text<img src='test.png' "
+        "style='width: 20px; height: 40px; vertical-align: top'></p>",
+        "html, body, p { display: block; margin: 0; padding: 0; }",
+        dummy_img_metrics());
+
+    LayoutNode* body = child_of_type(p.root.get(), BoxType::Block);
+    LayoutNode* para = child_of_type(body, BoxType::Block);
+    LayoutNode* anon = child_of_type(para, BoxType::AnonymousBlock);
+    LayoutNode* img = nullptr;
+    for (auto& c : anon->children)
+        if (c->type == BoxType::Image) { img = c.get(); break; }
+    REQUIRE(img != nullptr);
+
+    // top: верх картинки совпадает с верхом строки (y внутри IFC == 0).
+    REQUIRE(img->geometry.y == Approx(0.0f).epsilon(0.5));
+}
+
+TEST_CASE("LTB vertical-align: bottom aligns to line bottom",
+    "[ltb][vertical-align]") {
+    // Картинка 20px с vertical-align: bottom. Строка = max(child, strut).
+    // Низ картинки = низ строки.
+    ArenaAllocator arena;
+    auto p = run_pipeline_img(arena,
+        "<p>x<img src='test.png' "
+        "style='width: 20px; height: 20px; vertical-align: bottom'></p>",
+        "html, body, p { display: block; margin: 0; padding: 0; }",
+        dummy_img_metrics());
+
+    LayoutNode* body = child_of_type(p.root.get(), BoxType::Block);
+    LayoutNode* para = child_of_type(body, BoxType::Block);
+    LayoutNode* anon = child_of_type(para, BoxType::AnonymousBlock);
+    REQUIRE(anon != nullptr);
+    LayoutNode* img = nullptr;
+    for (auto& c : anon->children)
+        if (c->type == BoxType::Image) { img = c.get(); break; }
+    REQUIRE(img != nullptr);
+
+    // Низ картинки = height IFC (последняя строка).
+    const float img_bottom = img->geometry.y + img->geometry.height;
+    // Находим высоту IFC без margin/padding: anon.height целиком.
+    const float line_bottom = anon->geometry.height;
+    REQUIRE(img_bottom == Approx(line_bottom).epsilon(0.5));
+}
+
+TEST_CASE("LTB vertical-align: not inherited",
+    "[ltb][vertical-align]") {
+    // У родителя middle, у ребёнка без явного свойства — baseline.
+    // Проверяем через Storage: vertical_aligns у ребёнка = Baseline.
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div style='vertical-align: middle'>"
+        "  <span>x</span>"
+        "</div>",
+        "html, body, div { display: block; margin: 0; padding: 0; } "
+        "span { display: inline; }");
+
+    REQUIRE(p.storage.size() >= 3);
+    // soa indices: 0=html, 1=body, 2=div, 3=span
+    const uint32_t span_idx = 3;
+    REQUIRE(p.storage.vertical_aligns[span_idx]
+        == style::VerticalAlign::Baseline);
+}
+
+TEST_CASE("LTB vertical-align: property parsed from inline style",
+    "[ltb][vertical-align]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<span style='vertical-align: middle'>x</span>",
+        "html, body, span { display: inline; }");
+    REQUIRE(p.storage.size() >= 3);
+    const uint32_t span_idx = 2;
+    REQUIRE(p.storage.vertical_aligns[span_idx]
+        == style::VerticalAlign::Middle);
+}

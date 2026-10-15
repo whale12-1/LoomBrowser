@@ -422,6 +422,7 @@ private:
             {"flex-direction",  P::FlexDirection},
             {"justify-content", P::JustifyContent},
             {"align-items",     P::AlignItems},
+            {"vertical-align",  P::VerticalAlign},
             {"flex-grow",       P::FlexGrow},
             {"flex-shrink",     P::FlexShrink},
             {"flex-basis",      P::FlexBasis},
@@ -452,6 +453,7 @@ private:
         case Prop::FlexDirection: storage.flex_directions[idx] = parse_flex_dir(v); break;
         case Prop::JustifyContent: storage.justify_contents[idx] = parse_justify(v); break;
         case Prop::AlignItems: storage.align_items[idx] = parse_align_items(v); break;
+        case Prop::VerticalAlign: storage.vertical_aligns[idx] = parse_vertical_align(v); break;
 
         case Prop::ZIndex: {
             char* end = nullptr;
@@ -677,6 +679,15 @@ private:
         return AlignItems::Stretch;
     }
 
+    static style::VerticalAlign parse_vertical_align(const std::string& v) {
+        if (v == "middle")      return style::VerticalAlign::Middle;
+        if (v == "top")         return style::VerticalAlign::Top;
+        if (v == "bottom")      return style::VerticalAlign::Bottom;
+        if (v == "text-top")    return style::VerticalAlign::TextTop;
+        if (v == "text-bottom") return style::VerticalAlign::TextBottom;
+        // baseline (default); sub/super/<length>/<percent> — TODO.
+        return style::VerticalAlign::Baseline;
+    }
     static Length parse_length(const std::string& v) {
         size_t b = 0, e = v.size();
         while (b < e && std::isspace((unsigned char)v[b])) ++b;
