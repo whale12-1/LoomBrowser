@@ -255,21 +255,21 @@ void Page::dispatchClick(float x, float y) {
     // у которого есть реальный DOM-элемент.
     DOMNode* target = nullptr;
 
-    std::function<void(const LayoutNode*, float, float)> hit =
-        [&](const LayoutNode* n, float ox, float oy)
+    std::function<void(const LayoutNode*)> hit =
+        [&](const LayoutNode* n)
         {
             if (!n) return;
-            const float ax = ox + n->geometry.x;
-            const float ay = oy + n->geometry.y;
+            const float ax = n->geometry.x;
+            const float ay = n->geometry.y;
             const QRectF box(ax, ay, n->geometry.width, n->geometry.height);
             if (!box.contains(x, y)) return;
 
             if (n->style_soa_idx != UINT32_MAX) {
                 target = storage_.dom_nodes[n->style_soa_idx];
             }
-            for (const auto& c : n->children) hit(c.get(), ax, ay);
+            for (const auto& c : n->children) hit(c.get());
         };
-    hit(layout_.get(), 0.0f, 0.0f);
+    hit(layout_.get());
 
     if (!target) return;
 

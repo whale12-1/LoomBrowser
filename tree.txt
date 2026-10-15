@@ -1,11 +1,11 @@
-[Block] soa=0 display=block position=static rect=(0,0 1024x53.2812)
-  [Block] soa=1 display=block position=static rect=(0,0 1024x37.2812) margin=(0,0,16,0)
+[Block] soa=0 display=block position=static rect=(0,0 1024x58.5625)
+  [Block] soa=1 display=block position=static rect=(0,0 1024x58.5625) margin=(0,0,16,0)
     [Block] soa=2 display=block position=static bg=#eeeeeeff rect=(0,0 400x0)
       [Block] soa=3 display=block position=static bg=#ff0000ff rect=(0,0 100x80)
       [Block] soa=4 display=block position=static bg=#008000ff rect=(100,0 100x80)
       [Block] soa=5 display=block position=static bg=#0000ffff rect=(320,0 80x80)
-    [Block] soa=6 display=block position=static rect=(0,16 1024x21.2812) margin=(16,0,16,0)
-      [AnonBlock] soa=� rect=(0,0 1024x21.2812)
-        [Text] soa=� rect=(0,0 44.9531x21.2812) "После"
-        [Text] soa=� rect=(44.9531,0 4.375x21.2812) " "
-        [Text] soa=� rect=(49.3281,0 85.9219x21.2812) "контейнера"
+    [Block] soa=6 display=block position=static rect=(0,16 1024x42.5625) margin=(16,0,16,0)
+      [AnonBlock] soa=� rect=(0,16 1024x42.5625) margin=(16,0,16,0)
+        [Text] soa=� rect=(200,16 44.9531x21.2812) "После"
+        [Text] soa=� rect=(244.953,16 4.375x21.2812) " "
+        [Text] soa=� rect=(200,37.2812 85.9219x21.2812) "контейнера"

@@ -14,7 +14,7 @@ public:
         out.document_width = root->geometry.width;
         out.document_height = root->geometry.height;
 
-        walk(root, 0.0f, 0.0f, storage, out);
+        walk(root, storage, out);
         return out;
     }
 
@@ -26,11 +26,11 @@ private:
         return 0;
     }
 
-    static void walk(const LayoutNode* node, float ox, float oy,
+    static void walk(const LayoutNode* node,
         const StyleStorageSoA& storage, DisplayList& out)
     {
-        const float ax = ox + node->geometry.x;
-        const float ay = oy + node->geometry.y;
+        const float ax = node->geometry.x;
+        const float ay = node->geometry.y;
         const float w = node->geometry.width;
         const float h = node->geometry.height;
 
@@ -39,7 +39,7 @@ private:
             const DOMNode* dom = storage.dom_nodes[node->style_soa_idx];
             if (dom && std::string_view(dom->tag_name.data(), dom->tag_name.size()) == "br") {
                 for (const auto& c : node->children)
-                    walk(c.get(), ax, ay, storage, out);
+                    walk(c.get(), storage, out);
                 return;
             }
         }
@@ -172,6 +172,6 @@ private:
         }
 
         for (const auto& c : node->children)
-            walk(c.get(), ax, ay, storage, out);
+            walk(c.get(), storage, out);
     }
 };
