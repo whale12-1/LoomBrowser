@@ -377,6 +377,7 @@ private:
             {"display",        P::Display},
             {"position",       P::Position},
             {"float",          P::Float},
+            {"clear",          P::Clear},
             {"overflow",       P::Overflow},
             {"visibility",     P::Visibility},
             {"box-sizing",     P::BoxSizing},
@@ -443,6 +444,7 @@ private:
         case Prop::Display:  storage.displays[idx] = parse_display(v);  break;
         case Prop::Position: storage.positions[idx] = parse_position(v); break;
         case Prop::Float:    storage.floats[idx] = parse_float(v);    break;
+        case Prop::Clear: storage.clears[idx] = parse_clear(v); break;
         case Prop::Overflow: storage.overflows[idx] = parse_overflow(v); break;
         case Prop::Visibility: storage.visibilities[idx] = parse_visibility(v); break;
         case Prop::BoxSizing: storage.box_sizings[idx] = parse_box_sizing(v); break;
@@ -608,6 +610,14 @@ private:
         if (v == "right") return Float::Right;
         return Float::None;
     }
+
+    static Clear parse_clear(const std::string& v) {
+        if (v == "left")  return Clear::Left;
+        if (v == "right") return Clear::Right;
+        if (v == "both")  return Clear::Both;
+        return Clear::None;
+    }
+
     static Overflow parse_overflow(const std::string& v) {
         if (v == "hidden") return Overflow::Hidden;
         if (v == "scroll") return Overflow::Scroll;

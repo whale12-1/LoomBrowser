@@ -1728,9 +1728,22 @@ private:
             }
 
             if (is_float(child.get(), storage)) {
+                float float_y = g.y + inner_y + y_cursor;
+
+                // clear на float'е — сдвигаем его вниз от активных float'ов.
+                if (child->style_soa_idx != UINT32_MAX) {
+                    const auto cl = storage.clears[child->style_soa_idx];
+                    if (cl != style::Clear::None) {
+                        const bool cl_left = (cl == style::Clear::Left
+                            || cl == style::Clear::Both);
+                        const bool cl_right = (cl == style::Clear::Right
+                            || cl == style::Clear::Both);
+                        float_y = child_fc->clear_y(cl_left, cl_right, float_y);
+                    }
+                }
+
                 layout_float(child.get(), content_width, vp, storage, root_fs,
-                    tm, *child_fc, cb_left, cb_right,
-                    g.y + inner_y + y_cursor);
+                    tm, *child_fc, cb_left, cb_right, float_y);
                 continue;
             }
 
@@ -1744,9 +1757,22 @@ private:
                 ? (collapse_this_top ? 0.0f : cmt)
                 : collapse_margins(prev_bottom, cmt);
 
-            const float child_abs_y = g.y + inner_y + y_cursor + gap;
+            float child_abs_y = g.y + inner_y + y_cursor + gap;
             float child_abs_x = g.x + inner_x + cml;
             float pass_parent_width = content_width;
+
+            // clear: сдвигаем ребёнка вниз от активных float'ов до его
+            // раскладки, чтобы layout_ifc внутри сразу знал правильный y.
+            if (child->style_soa_idx != UINT32_MAX) {
+                const auto cl = storage.clears[child->style_soa_idx];
+                if (cl != style::Clear::None) {
+                    const bool cl_left = (cl == style::Clear::Left
+                        || cl == style::Clear::Both);
+                    const bool cl_right = (cl == style::Clear::Right
+                        || cl == style::Clear::Both);
+                    child_abs_y = child_fc->clear_y(cl_left, cl_right, child_abs_y);
+                }
+            }
 
             // BFC-устанавливающие дети НЕ должны пересекаться с float'ами.
             // Обычные блоки — не сдвигаются (по спеке только их line boxes
@@ -1762,7 +1788,9 @@ private:
                 pass_parent_width, vp, storage, root_fs, tm, child_fc);
 
             const float ch = child->geometry.height;
-            y_cursor += gap + ch;
+            // y_cursor пересчитываем от РЕАЛЬНОЙ позиции ребёнка:
+            // это автоматически учитывает сдвиг от clear.
+            y_cursor = (child_abs_y - (g.y + inner_y)) + ch;
             prev_bottom = cmb;
             first_child = false;
         }
@@ -2086,7 +2114,15 @@ private:
                     desired_y = cursor + collapse_margins(prev_mb, ctm);
                 }
 
-                const float dy = desired_y - child->geometry.y;
+                // Если ребёнок сдвинут через clear — не двигаем его вверх,
+                // иначе clear сломается. Вниз — можно (rare edge case:
+                // margin collapse съел больше, чем ожидалось).
+                const bool is_cleared = child->style_soa_idx != UINT32_MAX
+                    && storage.clears[child->style_soa_idx] != style::Clear::None;
+
+                float dy = desired_y - child->geometry.y;
+                if (is_cleared && dy < 0.0f) dy = 0.0f;
+
                 if (std::abs(dy) > 0.001f)
                     shift_subtree(child.get(), 0.0f, dy);
 

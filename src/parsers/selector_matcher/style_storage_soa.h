@@ -11,7 +11,7 @@ using style::Position;  using style::Float;
 using style::Overflow; using style::Visibility; using style::BoxSizing;
 using style::TextAlign; using style::FontStyle; using style::WhiteSpace;
 using style::FlexDir;  using style::Justify;    using style::AlignItems;
-using style::VerticalAlign;
+using style::VerticalAlign;using style::Clear;
 using style::Length;   using style::Unit;       using style::Color;
 using style::Prop;     using style::PROP_MASK_WORDS;
 
@@ -35,6 +35,7 @@ struct StyleStorageSoA {
     std::vector<style::Display>    displays;
     std::vector<Position>   positions;
     std::vector<Float>      floats;
+    std::vector<Clear> clears;
     std::vector<Overflow>   overflows;
     std::vector<Visibility> visibilities;
     std::vector<BoxSizing>  box_sizings;
@@ -95,6 +96,7 @@ struct StyleStorageSoA {
         displays.push_back(style::Display::Inline);
         positions.push_back(Position::Static);
         floats.push_back(Float::None);
+        clears.push_back(Clear::None);
         overflows.push_back(Overflow::Visible);
         visibilities.push_back(Visibility::Visible);
         box_sizings.push_back(BoxSizing::ContentBox);

@@ -13,6 +13,7 @@ namespace style {
 
     enum class Position : uint8_t { Static, Relative, Absolute, Fixed, Sticky };
     enum class Float : uint8_t { None, Left, Right };
+    enum class Clear : uint8_t { None, Left, Right, Both };
     enum class Overflow : uint8_t { Visible, Hidden, Scroll, Auto };
     enum class Visibility : uint8_t { Visible, Hidden, Collapse };
     enum class BoxSizing : uint8_t { ContentBox, BorderBox };
@@ -44,7 +45,7 @@ namespace style {
 
     // ---- ������������� CSS-��������. ������������ � ������� ������� ----
     enum class Prop : uint16_t {
-        Display, Position, Float, Overflow, Visibility, BoxSizing, ZIndex, Opacity,
+        Display, Position, Float, Clear , Overflow, Visibility, BoxSizing, ZIndex, Opacity,
         Color, BackgroundColor, BackgroundImage,
         FontSize, FontWeight, FontStyle, LineHeight, TextAlign, LetterSpacing, WhiteSpace,
         TextDecoration,

@@ -2680,3 +2680,134 @@ TEST_CASE("LTB float: float does not push following block down",
     // Обычный блок остаётся на y_cursor = 0 (float его не сдвинул).
     REQUIRE(plain->geometry.y == Approx(0.0f).epsilon(0.01));
 }
+
+// ============================================================
+//  clear
+// ============================================================
+
+TEST_CASE("LTB clear: clear-left pushes block below float",
+    "[ltb][float][clear]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div class='bfc'>"
+        "  <div class='f'></div>"
+        "  <div class='p'></div>"
+        "</div>",
+        "html, body { display: block; margin: 0; padding: 0; } "
+        ".bfc { display: block; width: 400px; } "
+        ".f   { float: left; width: 100px; height: 50px; } "
+        ".p   { clear: left; width: 100px; height: 20px; }");
+
+    LayoutNode* f = find_by_soa_idx(p.root.get(), 3);
+    LayoutNode* pl = find_by_soa_idx(p.root.get(), 4);
+    REQUIRE(f != nullptr);
+    REQUIRE(pl != nullptr);
+
+    REQUIRE(f->geometry.y == Approx(0.0f).epsilon(0.01));
+    // clear-left поднимает до y >= 50 (низ float'а).
+    REQUIRE(pl->geometry.y == Approx(50.0f).epsilon(0.01));
+}
+
+TEST_CASE("LTB clear: clear-both pushes below both sides",
+    "[ltb][float][clear]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div class='bfc'>"
+        "  <div class='l'></div>"
+        "  <div class='r'></div>"
+        "  <div class='p'></div>"
+        "</div>",
+        "html, body { display: block; margin: 0; padding: 0; } "
+        ".bfc { display: block; width: 400px; } "
+        ".l   { float: left;  width: 100px; height: 60px; } "
+        ".r   { float: right; width: 100px; height: 80px; } "
+        ".p   { clear: both;  width: 100px; height: 20px; }");
+
+    LayoutNode* pl = find_by_soa_idx(p.root.get(), 5);
+    REQUIRE(pl != nullptr);
+    // Максимум из bottom'ов: max(60, 80) = 80.
+    REQUIRE(pl->geometry.y == Approx(80.0f).epsilon(0.01));
+}
+
+TEST_CASE("LTB clear: clear-left ignores right float",
+    "[ltb][float][clear]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div class='bfc'>"
+        "  <div class='r'></div>"
+        "  <div class='p'></div>"
+        "</div>",
+        "html, body { display: block; margin: 0; padding: 0; } "
+        ".bfc { display: block; width: 400px; } "
+        ".r   { float: right; width: 100px; height: 80px; } "
+        ".p   { clear: left;  width: 100px; height: 20px; }");
+
+    LayoutNode* pl = find_by_soa_idx(p.root.get(), 4);
+    REQUIRE(pl != nullptr);
+    // clear-left не должен смотреть на правый float → y остаётся 0.
+    REQUIRE(pl->geometry.y == Approx(0.0f).epsilon(0.01));
+}
+
+TEST_CASE("LTB clear: clear on float itself",
+    "[ltb][float][clear]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div class='bfc'>"
+        "  <div class='a'></div>"
+        "  <div class='b'></div>"
+        "</div>",
+        "html, body { display: block; margin: 0; padding: 0; } "
+        ".bfc { display: block; width: 400px; } "
+        ".a { float: left; width: 100px; height: 50px; } "
+        ".b { float: left; clear: left; width: 100px; height: 50px; }");
+
+    LayoutNode* a = find_by_soa_idx(p.root.get(), 3);
+    LayoutNode* b = find_by_soa_idx(p.root.get(), 4);
+    REQUIRE(a != nullptr);
+    REQUIRE(b != nullptr);
+    // b с clear:left не встаёт рядом с a, а уходит под него.
+    REQUIRE(b->geometry.x == Approx(0.0f).epsilon(0.01));
+    REQUIRE(b->geometry.y == Approx(50.0f).epsilon(0.01));
+}
+
+// ============================================================
+//  overflow: hidden — auto-height BFC
+// ============================================================
+
+TEST_CASE("LTB overflow: hidden establishes BFC and stretches under floats",
+    "[ltb][float][bfc]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div class='bfc'>"
+        "  <div class='f'></div>"
+        "</div>",
+        "html, body { display: block; margin: 0; padding: 0; } "
+        ".bfc { display: block; width: 400px; overflow: hidden; } "
+        ".f   { float: left; width: 100px; height: 60px; }");
+
+    LayoutNode* bfc = find_by_soa_idx(p.root.get(), 2);
+    REQUIRE(bfc != nullptr);
+    // Раньше (без overflow) было бы 0; теперь растягивается под float.
+    REQUIRE(bfc->geometry.height == Approx(60.0f).epsilon(0.01));
+}
+
+TEST_CASE("LTB overflow: hidden isolates inner floats from outer context",
+    "[ltb][float][bfc]") {
+    // Float внутри .inner не должен влиять на брата снаружи.
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div class='inner'>"
+        "  <div class='f'></div>"
+        "</div>"
+        "<p class='outer'>X</p>",
+        "html, body { display: block; margin: 0; padding: 0; } "
+        ".inner { display: block; width: 200px; overflow: hidden; } "
+        ".f     { float: left; width: 100px; height: 80px; } "
+        ".outer { display: block; margin: 0; }");
+
+    LayoutNode* para = find_by_soa_idx(p.root.get(), 4);
+    REQUIRE(para != nullptr);
+    // float упакован в .inner BFC — наружу не протекает,
+    // значит X начинается с x = 0, а не с x = 100.
+    REQUIRE(para->geometry.x == Approx(0.0f).epsilon(0.01));
+}
