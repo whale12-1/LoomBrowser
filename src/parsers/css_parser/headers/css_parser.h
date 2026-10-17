@@ -497,6 +497,18 @@ private:
                     d.is_custom_property = (d.property.size() >= 2 &&
                         d.property[0] == '-' && d.property[1] == '-');
 
+                    // --- Новые кастомные шортхенды ---
+                    if (d.property == "background") {
+                        expand_background(d, decls);
+                        match(';');
+                        continue;
+                    }
+                    if (d.property == "border") {
+                        expand_border(d, decls);
+                        match(';');
+                        continue;
+                    }
+                    // ---------------------------------
                     // Shorthand → 4 longhand-декларации с тем же order и important.
                     auto sit = shorthand_table().find(d.property);
                     std::array<std::string, 4> expanded;
@@ -618,17 +630,23 @@ private:
 // =================================================================
     static bool expand_shorthand_1to4(const std::string& value,
         std::array<std::string, 4>& out) {
+        // border-radius: 10px 20px / 30px 40px — берём только первую
+        // часть (горизонтальные радиусы), вертикальную игнорируем.
+        std::string v = value;
+        const size_t slash = v.find('/');
+        if (slash != std::string::npos) v = v.substr(0, slash);
+
         std::array<std::string, 4> tok;
         int n = 0;
-        size_t i = 0, sz = value.size();
+        size_t i = 0, sz = v.size();
         while (i < sz && n < 4) {
-            while (i < sz && is_ws(value[i])) ++i;
+            while (i < sz && is_ws(v[i])) ++i;
             size_t st = i;
-            while (i < sz && !is_ws(value[i])) ++i;
-            if (i > st) tok[n++] = value.substr(st, i - st);
+            while (i < sz && !is_ws(v[i])) ++i;
+            if (i > st) tok[n++] = v.substr(st, i - st);
         }
         // Если после 4 токенов остались непустые — значение шире, чем shorthand.
-        while (i < sz && is_ws(value[i])) ++i;
+        while (i < sz && is_ws(v[i])) ++i;
         if (i < sz) return false;
 
         switch (n) {
@@ -641,6 +659,120 @@ private:
         return true;
     }
 
+    static std::vector<std::string> split_value_tokens(const std::string& value) {
+        std::vector<std::string> tokens;
+        size_t i = 0, n = value.size();
+        while (i < n) {
+            while (i < n && is_ws(value[i])) ++i;
+            if (i >= n) break;
+
+            if (value[i] == '"' || value[i] == '\'') {
+                char q = value[i++];
+                size_t start = i;
+                while (i < n && value[i] != q) {
+                    if (value[i] == '\\' && i + 1 < n) ++i;
+                    ++i;
+                }
+                if (i < n) ++i;
+                tokens.push_back(value.substr(start - 1, i - start + 1));
+            }
+            else {
+                size_t start = i;
+                while (i < n && !is_ws(value[i])) {
+                    if (value[i] == '(') {
+                        int depth = 1;
+                        ++i;
+                        while (i < n && depth > 0) {
+                            if (value[i] == '(') ++depth;
+                            else if (value[i] == ')') --depth;
+                            ++i;
+                        }
+                    }
+                    else {
+                        ++i;
+                    }
+                }
+                tokens.push_back(value.substr(start, i - start));
+            }
+        }
+        return tokens;
+    }
+
+    static void expand_background(const Declaration& d, std::vector<Declaration>& decls) {
+        auto tokens = split_value_tokens(d.value);
+        std::string color = "transparent";
+        std::string image = "none";
+        std::string repeat = "repeat";
+        std::string position = "0% 0%";
+        std::string size = "auto";
+
+        for (const auto& t : tokens) {
+            if (t.rfind("url(", 0) == 0 || t == "none") image = t;
+            else if (t == "no-repeat" || t == "repeat-x" || t == "repeat-y" || t == "repeat") repeat = t;
+            else if (t == "cover" || t == "contain") size = t;
+            else if (t == "center" || t == "top" || t == "left" || t == "bottom" || t == "right") {
+                if (position == "0% 0%") position = t;
+                else position += " " + t;
+            }
+            // Простейшая проверка на цвет (начинается с # или rgb или буквы, но не url/keyword)
+            else if (!t.empty() && (t[0] == '#' || t.rfind("rgb", 0) == 0 ||
+                (isalpha(t[0]) && t != "none" && t != "center"))) {
+                color = t;
+            }
+            else {
+                // Если это размер (px, em, %)
+                if (size == "auto") size = t;
+                else position += " " + t;
+            }
+        }
+
+        auto add = [&](const std::string& prop, const std::string& val) {
+            Declaration dd;
+            dd.property = prop;
+            dd.value = val;
+            dd.important = d.important;
+            decls.push_back(dd);
+            };
+
+        add("background-color", color);
+        add("background-image", image);
+        add("background-repeat", repeat);
+        add("background-position", position);
+        if (size != "auto") add("background-size", size);
+    }
+
+    static void expand_border(const Declaration& d, std::vector<Declaration>& decls) {
+        auto tokens = split_value_tokens(d.value);
+        std::string width = "medium";
+        std::string style = "none";
+        std::string color = "currentcolor";
+
+        for (const auto& t : tokens) {
+            if (t == "thin" || t == "medium" || t == "thick" || isdigit(t[0])) width = t;
+            else if (t == "none" || t == "solid" || t == "dashed" || t == "dotted") style = t;
+            else if (t[0] == '#' || t.rfind("rgb", 0) == 0 || isalpha(t[0])) color = t;
+        }
+
+        // Применяем ко всем 4 сторонам (у нас нет border-style, только width и color)
+        if (style != "none") {
+            auto add = [&](const std::string& prop, const std::string& val) {
+                Declaration dd;
+                dd.property = prop;
+                dd.value = val;
+                dd.important = d.important;
+                decls.push_back(dd);
+                };
+            add("border-top-width", width);
+            add("border-right-width", width);
+            add("border-bottom-width", width);
+            add("border-left-width", width);
+            add("border-top-color", color);
+            add("border-right-color", color);
+            add("border-bottom-color", color);
+            add("border-left-color", color);
+        }
+    }
+
     struct ShorthandMap {
         const char* longhands[4];
     };
@@ -648,6 +780,8 @@ private:
         static const std::unordered_map<std::string, ShorthandMap> t = {
             { "margin",       {{ "margin-top",  "margin-right",
                                  "margin-bottom","margin-left"  }} },
+            { "border-radius", {{ "border-top-left-radius",  "border-top-right-radius",
+                                  "border-bottom-right-radius","border-bottom-left-radius" }} },
             { "padding",      {{ "padding-top", "padding-right",
                                  "padding-bottom","padding-left" }} },
             { "border-width", {{ "border-top-width",  "border-right-width",

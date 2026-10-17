@@ -13,6 +13,11 @@
 #include <QStatusBar>
 #include <QLabel>
 #include <QDebug>
+#include <QFontDatabase>
+#include <QNetworkAccessManager>
+#include <QNetworkRequest>
+#include <QNetworkReply>
+#include <QEventLoop>
 
 namespace {
 
@@ -23,37 +28,51 @@ namespace {
         LayoutTreeBuilder::TextMetrics m;
         const QFont base = widget->font();
 
-        m.measure_width = [base](const std::string& text,
-            float fs, bool bold, bool italic) -> float
-            {
-                QFont f = base;
-                f.setPixelSize(std::max(1, int(fs)));
-                f.setBold(bold);
-                f.setItalic(italic);
-                QFontMetricsF fm(f);
-                return float(fm.horizontalAdvance(QString::fromStdString(text)));
-            };
-
-        m.line_spacing = [base](float fs, bool bold) -> float {
-            QFont f = base;
+        auto make_font = [base](float fs, const std::string& family, bool bold, bool italic) {
+            QFont f;
+            if (!family.empty()) {
+                QStringList families = QString::fromStdString(family).split(",", Qt::SkipEmptyParts);
+                for (QString& fam : families) {
+                    fam = fam.trimmed();
+                    if (fam.startsWith("\"") && fam.endsWith("\""))
+                        fam = fam.mid(1, fam.size() - 2);
+                    else if (fam.startsWith("'") && fam.endsWith("'"))
+                        fam = fam.mid(1, fam.size() - 2);
+                }
+                QString chosen = "";
+                for (const QString& fam : families) {
+                    if (fam.compare("sans-serif", Qt::CaseInsensitive) == 0) { chosen = "Arial"; break; }
+                    if (fam.compare("serif", Qt::CaseInsensitive) == 0) { chosen = "Times New Roman"; break; }
+                    if (fam.compare("monospace", Qt::CaseInsensitive) == 0) { chosen = "Courier New"; break; }
+                    if (QFontDatabase::families().contains(fam, Qt::CaseInsensitive)) {
+                        chosen = fam; break;
+                    }
+                }
+                if (chosen.isEmpty() && !families.isEmpty()) chosen = families[0];
+                if (!chosen.isEmpty()) f.setFamily(chosen);
+                else f = base;
+            }
+            else {
+                f = base;
+            }
             f.setPixelSize(std::max(1, int(fs)));
             f.setBold(bold);
-            QFontMetricsF fm(f);
-            return float(fm.lineSpacing());
+            f.setItalic(italic);
+            return f;
             };
 
-        m.ascent = [base](float fs, bool bold) -> float {
-            QFont f = base;
-            f.setPixelSize(std::max(1, int(fs)));
-            f.setBold(bold);
-            return float(QFontMetricsF(f).ascent());
+        m.measure_width = [make_font](const std::string& text, float fs, const std::string& family, bool bold, bool italic) -> float {
+            QFont f = make_font(fs, family, bold, italic);
+            return float(QFontMetricsF(f).horizontalAdvance(QString::fromStdString(text)));
             };
-
-        m.descent = [base](float fs, bool bold) -> float {
-            QFont f = base;
-            f.setPixelSize(std::max(1, int(fs)));
-            f.setBold(bold);
-            return float(QFontMetricsF(f).descent());
+        m.line_spacing = [make_font](float fs, const std::string& family, bool bold) -> float {
+            return float(QFontMetricsF(make_font(fs, family, bold, false)).lineSpacing());
+            };
+        m.ascent = [make_font](float fs, const std::string& family, bool bold) -> float {
+            return float(QFontMetricsF(make_font(fs, family, bold, false)).ascent());
+            };
+        m.descent = [make_font](float fs, const std::string& family, bool bold) -> float {
+            return float(QFontMetricsF(make_font(fs, family, bold, false)).descent());
             };
 
         return m;
@@ -158,13 +177,46 @@ void BrowserWindow::onHttpResponse(const net::HttpResponse& resp) {
 
     const int vw = view_->viewport()->width();
     const int vh = view_->viewport()->height();
-
-    // Метрики берём от того же шрифта, что и canvas рисует —
-    // тогда layout и painter не разойдутся по метрикам глифов.
     const auto tm = makeQtTextMetrics(view_->canvas());
 
+    std::string base_url = "";
+    if (history_pos_ >= 0 && history_pos_ < (int)history_.size()) {
+        base_url = history_[history_pos_].text;
+    }
+
+    // Лямбда, которая скачивает CSS
+    auto fetch_resource = [base_url](const std::string& href) -> std::string {
+        // Используем QUrl для правильного разрешения относительных путей (например, news.css)
+        QUrl base_qurl(QString::fromStdString(base_url));
+        QUrl abs_qurl = base_qurl.resolved(QUrl(QString::fromStdString(href)));
+        std::string abs_url = abs_qurl.toString().toStdString();
+
+        qDebug() << "[CSS] Fetching:" << QString::fromStdString(abs_url);
+
+        static QNetworkAccessManager nam;
+        QNetworkRequest req(QUrl(QString::fromStdString(abs_url)));
+        req.setHeader(QNetworkRequest::UserAgentHeader, "Mozilla/5.0");
+
+        QNetworkReply* reply = nam.get(req);
+        QEventLoop loop;
+        QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+        loop.exec();
+
+        if (reply->error() == QNetworkReply::NoError) {
+            QByteArray data = reply->readAll();
+            reply->deleteLater();
+            qDebug() << "[CSS] Downloaded bytes:" << data.size();
+            return std::string(data.constData(), data.size());
+        }
+
+        qDebug() << "[CSS] Error:" << reply->errorString();
+        reply->deleteLater();
+        return "";
+        };
+
+
     page_ = std::make_unique<Page>();
-    page_->loadHtml(html, float(vw), float(vh), tm);
+    page_->loadHtml(html, base_url, fetch_resource, float(vw), float(vh), tm);
 
     view_->setDisplayList(page_->displayList());
     status_label_->setText(
@@ -203,7 +255,7 @@ void BrowserWindow::showErrorPage(const QString& title, const QString& details) 
     const auto tm = makeQtTextMetrics(view_->canvas());
 
     page_ = std::make_unique<Page>();
-    page_->loadHtml(html, float(vw), float(vh), tm);
+    page_->loadHtml(html, "", nullptr, float(vw), float(vh), tm);
 
     view_->setDisplayList(page_->displayList());
     status_label_->setText(title);

@@ -5,6 +5,9 @@
 #include <QFontMetricsF>
 #include <QImage>
 #include <QString>
+#include <QFont>
+#include <QFontDatabase> // <-- Добавить
+#include <QFontMetricsF>
 
 #include <algorithm>
 #include <fstream>
@@ -67,42 +70,67 @@ namespace {
     LayoutTreeBuilder::TextMetrics make_qt_metrics() {
         LayoutTreeBuilder::TextMetrics tm;
 
-        tm.measure_width = [](const std::string& text, float fs,
+        // Хелпер для создания QFont с учетом font-family (включая списки)
+        auto get_qt_font = [](float fs, const std::string& family, bool bold, bool italic) {
+            QFont f;
+            if (!family.empty()) {
+                QStringList families = QString::fromStdString(family).split(",", Qt::SkipEmptyParts);
+                for (QString& fam : families) {
+                    fam = fam.trimmed();
+                    if (fam.startsWith("\"") && fam.endsWith("\""))
+                        fam = fam.mid(1, fam.size() - 2);
+                    else if (fam.startsWith("'") && fam.endsWith("'"))
+                        fam = fam.mid(1, fam.size() - 2);
+                }
+
+                QString chosen = "";
+                for (const QString& fam : families) {
+                    if (fam.compare("sans-serif", Qt::CaseInsensitive) == 0) { chosen = "Arial"; break; }
+                    if (fam.compare("serif", Qt::CaseInsensitive) == 0) { chosen = "Times New Roman"; break; }
+                    if (fam.compare("monospace", Qt::CaseInsensitive) == 0) { chosen = "Courier New"; break; }
+
+                    if (QFontDatabase::families().contains(fam, Qt::CaseInsensitive)) {
+                        chosen = fam; break;
+                    }
+                }
+                if (chosen.isEmpty() && !families.isEmpty()) chosen = families[0];
+
+                if (!chosen.isEmpty()) f.setFamily(chosen);
+            }
+            f.setPixelSize(std::max(1, qRound(fs)));
+            f.setBold(bold);
+            f.setItalic(italic);
+            return f;
+            };
+
+        tm.measure_width = [get_qt_font](const std::string& text, float fs, const std::string& ff,
             bool bold, bool italic) {
-                QFont f;
-                f.setPixelSize(std::max(1, qRound(fs)));
-                f.setBold(bold);
-                f.setItalic(italic);
+                QFont f = get_qt_font(fs, ff, bold, italic);
                 QFontMetricsF fm(f);
                 const QString s = QString::fromUtf8(text.data(),
                     static_cast<int>(text.size()));
                 return static_cast<float>(fm.horizontalAdvance(s));
             };
 
-        tm.line_spacing = [](float fs, bool bold) {
-            QFont f;
-            f.setPixelSize(std::max(1, qRound(fs)));
-            f.setBold(bold);
+        tm.line_spacing = [get_qt_font](float fs, const std::string& ff, bool bold) {
+            QFont f = get_qt_font(fs, ff, bold, false);
             QFontMetricsF fm(f);
             return static_cast<float>(fm.lineSpacing());
             };
 
-        tm.ascent = [](float fs, bool bold) {
-            QFont f;
-            f.setPixelSize(std::max(1, qRound(fs)));
-            f.setBold(bold);
+        tm.ascent = [get_qt_font](float fs, const std::string& ff, bool bold) {
+            QFont f = get_qt_font(fs, ff, bold, false);
             return static_cast<float>(QFontMetricsF(f).ascent());
             };
 
-        tm.descent = [](float fs, bool bold) {
-            QFont f;
-            f.setPixelSize(std::max(1, qRound(fs)));
-            f.setBold(bold);
+        tm.descent = [get_qt_font](float fs, const std::string& ff, bool bold) {
+            QFont f = get_qt_font(fs, ff, bold, false);
             return static_cast<float>(QFontMetricsF(f).descent());
             };
 
         return tm;
     }
+
     std::string resolve_path(const std::string& base_dir,
         const std::string& src)
     {

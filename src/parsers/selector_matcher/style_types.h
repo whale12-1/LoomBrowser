@@ -30,7 +30,7 @@ namespace style {
     enum class FlexDir : uint8_t { Row, RowReverse, Column, ColumnReverse };
     enum class Justify : uint8_t { Start, End, Center, SpaceBetween, SpaceAround, SpaceEvenly };
     enum class AlignItems : uint8_t { Stretch, FlexStart, FlexEnd, Center, Baseline };
-
+    // background-repeat (упрощённо; space/round пока не поддержаны).
     // CSS vertical-align (CSS 2.1 §10.8.1). Применяется к inline-уровневым
     // детям в IFC. Не наследуется.
     // Не реализованы (TODO): sub, super, <length>, <percent>.
@@ -47,7 +47,7 @@ namespace style {
     enum class Prop : uint16_t {
         Display, Position, Float, Clear , Overflow, Visibility, BoxSizing, ZIndex, Opacity,
         Color, BackgroundColor, BackgroundImage,
-        FontSize, FontWeight, FontStyle, LineHeight, TextAlign, LetterSpacing, WhiteSpace,
+        FontSize, FontWeight, FontStyle, FontFamily, LineHeight, TextAlign, LetterSpacing, WhiteSpace,
         TextDecoration,
         Width, Height, MinWidth, MaxWidth, MinHeight, MaxHeight,
         Top, Right, Bottom, Left,
@@ -57,6 +57,9 @@ namespace style {
         BorderTopColor, BorderRightColor, BorderBottomColor, BorderLeftColor,
         VerticalAlign,
         FlexDirection, JustifyContent, AlignItems, FlexGrow, FlexShrink, FlexBasis,
+        BorderRadius, BorderTopLeftRadius, BorderTopRightRadius,
+        BorderBottomRightRadius, BorderBottomLeftRadius,
+        BackgroundSize, BackgroundPosition, BackgroundRepeat,
         COUNT
     };
 
@@ -69,7 +72,7 @@ namespace style {
     inline bool is_inherited(Prop p) {
         switch (p) {
         case Prop::Color: case Prop::FontSize: case Prop::FontWeight:
-        case Prop::FontStyle: case Prop::LineHeight: case Prop::TextAlign:
+        case Prop::FontStyle: case Prop::FontFamily: case Prop::LineHeight: case Prop::TextAlign:
         case Prop::LetterSpacing: case Prop::WhiteSpace: case Prop::Visibility:
             return true;
         default: return false;
@@ -89,6 +92,31 @@ namespace style {
         bool is_auto() const { return unit == Unit::Auto; }
         bool is_none() const { return unit == Unit::None; }
         bool is_zero() const { return value == 0.0f && unit == Unit::Px; }
+    };
+
+    enum class BackgroundRepeat : uint8_t {
+        Repeat, RepeatX, RepeatY, NoRepeat
+    };
+
+    // background-size.
+    enum class BgSizeKind : uint8_t {
+        Auto,        // auto / auto auto (использовать intrinsic)
+        Cover,
+        Contain,
+        Explicit     // w/h заданы (px/em/%) — резолвится в builder'е
+    };
+
+    struct BackgroundSize {
+        BgSizeKind kind = BgSizeKind::Auto;
+        Length w{ -1.0f, Unit::Auto };   // Auto → intrinsic
+        Length h{ -1.0f, Unit::Auto };
+    };
+
+    // background-position. Проценты резолвятся в рендерере (зависят
+    // от итогового размера изображения), px — уже готовые.
+    struct BackgroundPosition {
+        Length x{ 0.0f, Unit::Percent };   // 0% = left
+        Length y{ 0.0f, Unit::Percent };   // 0% = top
     };
 
     // ---- ���� 0xRRGGBBAA ----

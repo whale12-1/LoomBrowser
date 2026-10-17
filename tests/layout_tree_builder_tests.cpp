@@ -2696,7 +2696,7 @@ TEST_CASE("LTB clear: clear-left pushes block below float",
         "html, body { display: block; margin: 0; padding: 0; } "
         ".bfc { display: block; width: 400px; } "
         ".f   { float: left; width: 100px; height: 50px; } "
-        ".p   { clear: left; width: 100px; height: 20px; }");
+        ".p   { display: block; clear: left; width: 100px; height: 20px; }");
 
     LayoutNode* f = find_by_soa_idx(p.root.get(), 3);
     LayoutNode* pl = find_by_soa_idx(p.root.get(), 4);
@@ -2721,7 +2721,7 @@ TEST_CASE("LTB clear: clear-both pushes below both sides",
         ".bfc { display: block; width: 400px; } "
         ".l   { float: left;  width: 100px; height: 60px; } "
         ".r   { float: right; width: 100px; height: 80px; } "
-        ".p   { clear: both;  width: 100px; height: 20px; }");
+        ".p   { display: block; clear: both;  width: 100px; height: 20px; }");
 
     LayoutNode* pl = find_by_soa_idx(p.root.get(), 5);
     REQUIRE(pl != nullptr);
@@ -2810,4 +2810,281 @@ TEST_CASE("LTB overflow: hidden isolates inner floats from outer context",
     // float упакован в .inner BFC — наружу не протекает,
     // значит X начинается с x = 0, а не с x = 100.
     REQUIRE(para->geometry.x == Approx(0.0f).epsilon(0.01));
+}
+
+// ============================================================
+//  Border-radius
+// ============================================================
+
+namespace {
+    inline const DisplayItem* find_rect_item(const DisplayList& dl,
+        uint32_t color)
+    {
+        for (const auto& it : dl.items)
+            if (it.type == DisplayItemType::Rect && it.color == color)
+                return &it;
+        return nullptr;
+    }
+}
+
+TEST_CASE("LTB radius: shorthand 1 value sets all corners",
+    "[ltb][radius]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div style='background-color: red; width: 100px; height: 50px;"
+        "            border-radius: 8px'></div>",
+        "html, body, div { display: block; margin: 0; padding: 0; }");
+
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+    const DisplayItem* it = find_rect_item(dl, 0xFF0000FFu);
+    REQUIRE(it != nullptr);
+    REQUIRE(it->radius_tl == Approx(8.0f));
+    REQUIRE(it->radius_tr == Approx(8.0f));
+    REQUIRE(it->radius_br == Approx(8.0f));
+    REQUIRE(it->radius_bl == Approx(8.0f));
+}
+
+TEST_CASE("LTB radius: shorthand 2 values",
+    "[ltb][radius]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div style='background-color: red; width: 100px; height: 50px;"
+        "            border-radius: 4px 12px'></div>",
+        "html, body, div { display: block; margin: 0; padding: 0; }");
+
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+    const DisplayItem* it = find_rect_item(dl, 0xFF0000FFu);
+    REQUIRE(it != nullptr);
+    REQUIRE(it->radius_tl == Approx(4.0f));
+    REQUIRE(it->radius_tr == Approx(12.0f));
+    REQUIRE(it->radius_br == Approx(4.0f));
+    REQUIRE(it->radius_bl == Approx(12.0f));
+}
+
+TEST_CASE("LTB radius: 4 explicit corners",
+    "[ltb][radius]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div style='background-color: red; width: 100px; height: 50px;"
+        "            border-radius: 1px 2px 3px 4px'></div>",
+        "html, body, div { display: block; margin: 0; padding: 0; }");
+
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+    const DisplayItem* it = find_rect_item(dl, 0xFF0000FFu);
+    REQUIRE(it != nullptr);
+    REQUIRE(it->radius_tl == Approx(1.0f));
+    REQUIRE(it->radius_tr == Approx(2.0f));
+    REQUIRE(it->radius_br == Approx(3.0f));
+    REQUIRE(it->radius_bl == Approx(4.0f));
+}
+
+TEST_CASE("LTB radius: percent of min(w,h)",
+    "[ltb][radius]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div style='background-color: red; width: 200px; height: 100px;"
+        "            border-radius: 50%'></div>",
+        "html, body, div { display: block; margin: 0; padding: 0; }");
+
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+    const DisplayItem* it = find_rect_item(dl, 0xFF0000FFu);
+    REQUIRE(it != nullptr);
+    // min(200,100)*0.5 = 50.
+    REQUIRE(it->radius_tl == Approx(50.0f));
+}
+
+// ============================================================
+//  background-size / position / repeat
+// ============================================================
+
+TEST_CASE("LTB bg-size: cover stored in DisplayItem",
+    "[ltb][bg-size]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div style='width: 200px; height: 100px;"
+        "            background-image: url(a.png); background-size: cover'></div>",
+        "html, body, div { display: block; margin: 0; padding: 0; }");
+
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+    for (const auto& it : dl.items) {
+        if (it.type == DisplayItemType::Image) {
+            REQUIRE(it.is_background);
+            REQUIRE(it.bg_size_kind == 1); // Cover
+            return;
+        }
+    }
+    FAIL("no image item");
+}
+
+TEST_CASE("LTB bg-size: contain", "[ltb][bg-size]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div style='width: 200px; height: 100px;"
+        "            background-image: url(a.png); background-size: contain'></div>",
+        "html, body, div { display: block; margin: 0; padding: 0; }");
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+    for (const auto& it : dl.items) {
+        if (it.type == DisplayItemType::Image) {
+            REQUIRE(it.bg_size_kind == 2);
+            return;
+        }
+    }
+    FAIL("no image");
+}
+
+TEST_CASE("LTB bg-size: explicit px", "[ltb][bg-size]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div style='width: 200px; height: 100px;"
+        "            background-image: url(a.png);"
+        "            background-size: 50px 30px'></div>",
+        "html, body, div { display: block; margin: 0; padding: 0; }");
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+    for (const auto& it : dl.items) {
+        if (it.type == DisplayItemType::Image) {
+            REQUIRE(it.bg_size_kind == 3);
+            REQUIRE(it.bg_size_w == Approx(50.0f));
+            REQUIRE(it.bg_size_h == Approx(30.0f));
+            return;
+        }
+    }
+    FAIL("no image");
+}
+
+TEST_CASE("LTB bg-size: percent of border-box",
+    "[ltb][bg-size]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div style='width: 200px; height: 100px;"
+        "            background-image: url(a.png);"
+        "            background-size: 50%'></div>",
+        "html, body, div { display: block; margin: 0; padding: 0; }");
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+    for (const auto& it : dl.items) {
+        if (it.type == DisplayItemType::Image) {
+            REQUIRE(it.bg_size_w == Approx(100.0f));   // 50% * 200
+            REQUIRE(it.bg_size_h == Approx(0.0f));     // auto
+            return;
+        }
+    }
+    FAIL("no image");
+}
+
+TEST_CASE("LTB bg-repeat: no-repeat", "[ltb][bg-repeat]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div style='width: 100px; height: 100px;"
+        "            background-image: url(a.png);"
+        "            background-repeat: no-repeat'></div>",
+        "html, body, div { display: block; margin: 0; padding: 0; }");
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+    for (const auto& it : dl.items) {
+        if (it.type == DisplayItemType::Image) {
+            REQUIRE(it.bg_repeat == 3);
+            return;
+        }
+    }
+    FAIL("no image");
+}
+
+TEST_CASE("LTB bg-position: center keyword",
+    "[ltb][bg-position]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div style='width: 100px; height: 100px;"
+        "            background-image: url(a.png);"
+        "            background-position: center'></div>",
+        "html, body, div { display: block; margin: 0; padding: 0; }");
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+    for (const auto& it : dl.items) {
+        if (it.type == DisplayItemType::Image) {
+            REQUIRE(it.bg_pos_x_unit == 1);
+            REQUIRE(it.bg_pos_y_unit == 1);
+            REQUIRE(it.bg_pos_x == Approx(50.0f));
+            REQUIRE(it.bg_pos_y == Approx(50.0f));
+            return;
+        }
+    }
+    FAIL("no image");
+}
+
+TEST_CASE("LTB bg-position: right bottom",
+    "[ltb][bg-position]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div style='width: 100px; height: 100px;"
+        "            background-image: url(a.png);"
+        "            background-position: right bottom'></div>",
+        "html, body, div { display: block; margin: 0; padding: 0; }");
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+    for (const auto& it : dl.items) {
+        if (it.type == DisplayItemType::Image) {
+            REQUIRE(it.bg_pos_x == Approx(100.0f));
+            REQUIRE(it.bg_pos_y == Approx(100.0f));
+            return;
+        }
+    }
+    FAIL("no image");
+}
+
+// ============================================================
+//  overflow: hidden — clip
+// ============================================================
+
+TEST_CASE("LTB clip: overflow hidden sets clip on children",
+    "[ltb][clip]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div style='width: 100px; height: 100px; overflow: hidden;"
+        "            background-color: red'>"
+        "  <p style='width: 200px; height: 200px; background-color: blue'></p>"
+        "</div>",
+        "html, body, div { display: block; margin: 0; padding: 0; }"
+        "p { display: block; margin: 0; }");
+
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+
+    // Ищем синий rect (child) — у него должен быть clip.
+    const DisplayItem* child = find_rect_item(dl, 0x0000FFFFu);
+    REQUIRE(child != nullptr);
+    REQUIRE(child->has_clip);
+    REQUIRE(child->clip_w == Approx(100.0f));
+    REQUIRE(child->clip_h == Approx(100.0f));
+}
+
+TEST_CASE("LTB clip: overflow visible leaves no clip",
+    "[ltb][clip]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div style='width: 100px; height: 100px'>"
+        "  <p style='width: 50px; height: 50px; background-color: blue'></p>"
+        "</div>",
+        "html, body, div { display: block; margin: 0; padding: 0; }"
+        "p { display: block; margin: 0; }");
+
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+    const DisplayItem* child = find_rect_item(dl, 0x0000FFFFu);
+    REQUIRE(child != nullptr);
+    REQUIRE_FALSE(child->has_clip);
+}
+
+TEST_CASE("LTB clip: nested overflow hidden intersects clips",
+    "[ltb][clip]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div style='width: 200px; height: 200px; overflow: hidden'>"
+        "  <div style='width: 50px; height: 50px; overflow: hidden'>"
+        "    <p style='width: 400px; height: 400px;"
+        "              background-color: blue'></p>"
+        "  </div>"
+        "</div>",
+        "html, body, div { display: block; margin: 0; padding: 0; }"
+        "p { display: block; margin: 0; }");
+
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+    const DisplayItem* child = find_rect_item(dl, 0x0000FFFFu);
+    REQUIRE(child != nullptr);
+    REQUIRE(child->has_clip);
+    REQUIRE(child->clip_w == Approx(50.0f));
+    REQUIRE(child->clip_h == Approx(50.0f));
 }

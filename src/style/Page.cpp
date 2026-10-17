@@ -10,10 +10,20 @@
 #include <QImage>
 #include <QRectF>
 #include <QDebug>
+#include <QEventLoop>
+#include <QByteArray>
 #include <functional>
 
 // ---- Вспомогательные обходы DOM ----
 namespace {
+
+    void collect_link_tags(DOMNode* n, std::vector<DOMNode*>& out) {
+        if (!n) return;
+        if (n->type == NodeType::Element && n->tag_name == "link") {
+            out.push_back(n);
+        }
+        for (DOMNode* c : n->children) collect_link_tags(c, out);
+    }
 
     void collectStyleText(DOMNode* n, std::string& out) {
         if (!n) return;
@@ -104,6 +114,8 @@ void Page::releaseListeners() {
 // ============================================================
 
 void Page::loadHtml(const std::string& html,
+    const std::string& base_url,
+    std::function<std::string(const std::string&)> fetch_resource,
     float viewport_w, float viewport_h,
     const LayoutTreeBuilder::TextMetrics& tm)
 {
@@ -111,11 +123,8 @@ void Page::loadHtml(const std::string& html,
     viewport_h_ = viewport_h;
     text_metrics_ = tm;
 
-    // 1. Сначала освобождаем JS-значения старого контекста, потом
-    //    сносим сам контекст — иначе получим use-after-free.
     releaseListeners();
 
-    // 2. Полный сброс страницы.
     arena_.reset();
     document_ = nullptr;
     js_.reset();
@@ -123,27 +132,46 @@ void Page::loadHtml(const std::string& html,
     layout_.reset();
     display_list_.clear();
     dom_dirty_ = false;
+    external_css_.clear(); // Сброс внешнего CSS
 
-    // 3. Парсим новый HTML.
     HTMLParser hp(arena_);
     DOMNode* doc = hp.parse(html);
     if (!doc) return;
     document_ = firstElement(doc);
     if (!document_) return;
 
-    // 4. JS-движок + DOM-глобалы.
+    // --- НОВОЕ: Загрузка внешних CSS ---
+    if (fetch_resource && !base_url.empty()) {
+        std::vector<DOMNode*> links;
+        collect_link_tags(document_, links);
+        for (DOMNode* link : links) {
+            std::string rel, href;
+            for (const auto& kv : link->attributes) {
+                std::string_view k(kv.first.data(), kv.first.size());
+                if (k == "rel") rel = kv.second;
+                if (k == "href") href = kv.second;
+            }
+            if (rel == "stylesheet" && !href.empty()) {
+                qDebug() << "[Page] Found stylesheet link:" << QString::fromStdString(href);
+
+                // Вызываем функцию, которую нам передали извне
+                std::string css = fetch_resource(href);
+
+                if (!css.empty()) {
+                    external_css_ += css;
+                    external_css_ += "\n";
+                }
+            }
+        }
+        qDebug() << "[Page] Total external CSS size:" << external_css_.size();
+    }
+    // ----------------------------------
+
     js_ = std::make_unique<JsEngine>();
     js_->installGlobals(this, document_);
-    // ДИАГНОСТИКА — удалить после проверки
-    js_->run("console.log('typeof document =', typeof document);", "<diag>");
-    js_->run("console.log('typeof __elementClassId =', typeof __elementClassId);", "<diag>");
-    js_->run("console.log('typeof console =', typeof console);", "<diag>");
-    js_->run("console.log('typeof __page =', typeof __page);", "<diag>");
+    // ... диагностика ...
 
-    // 5. Выполняем скрипты до layout'а — они могут менять DOM.
     runInlineScripts();
-
-    // 6. Первый расчёт layout и display list.
     rebuild();
 }
 
@@ -172,13 +200,17 @@ void Page::rebuild() {
     if (!document_) return;
 
     // 1. CSS: UA + все <style>.
-    std::string author_css;
-    collectStyleText(document_, author_css);
-
+    std::string author_css = external_css_; // <-- Начинаем с внешнего CSS
+    collectStyleText(document_, author_css); // <-- Добавляем <style> из HTML
     CSSParser cp(arena_);
     StyleSheet* ua = cp.parse(ua_css::kSource);
     StyleSheet* author = cp.parse(author_css);
-
+    qDebug() << "UA CSS rules parsed:" << ua->rules.size();
+    qDebug() << "Author CSS rules parsed:" << author->rules.size();
+    qDebug() << "Author CSS errors:" << cp.errors().size();
+    for (const auto& err : cp.errors()) {
+        qDebug() << "CSS Error:" << QString::fromStdString(err);
+    }
     std::vector<StyleRuleIndex::SheetRef> sources = {
         { ua,     Origin::UserAgent },
         { author, Origin::Author    },

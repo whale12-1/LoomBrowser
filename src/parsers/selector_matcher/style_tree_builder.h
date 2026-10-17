@@ -389,6 +389,7 @@ private:
             {"font-size",      P::FontSize},
             {"font-weight",    P::FontWeight},
             {"font-style",     P::FontStyle},
+            {"font-family",    P::FontFamily},
             {"line-height",    P::LineHeight},
             {"text-align",     P::TextAlign},
             {"text-decoration", P::TextDecoration},
@@ -420,6 +421,14 @@ private:
             {"border-right-color",  P::BorderRightColor},
             {"border-bottom-color", P::BorderBottomColor},
             {"border-left-color",   P::BorderLeftColor},
+            {"border-radius",              P::BorderRadius},
+            {"border-top-left-radius",     P::BorderTopLeftRadius},
+            {"border-top-right-radius",    P::BorderTopRightRadius},
+            {"border-bottom-right-radius", P::BorderBottomRightRadius},
+            {"border-bottom-left-radius",  P::BorderBottomLeftRadius},
+            {"background-size",            P::BackgroundSize},
+            {"background-position",        P::BackgroundPosition},
+            {"background-repeat",          P::BackgroundRepeat},
             {"flex-direction",  P::FlexDirection},
             {"justify-content", P::JustifyContent},
             {"align-items",     P::AlignItems},
@@ -542,7 +551,34 @@ private:
         case Prop::FlexGrow:   storage.flex_grows[idx] = std::strtof(v.c_str(), nullptr); break;
         case Prop::FlexShrink: storage.flex_shrinks[idx] = std::strtof(v.c_str(), nullptr); break;
         case Prop::FlexBasis:  storage.flex_bases[idx] = parse_length(v); break;
-
+        case Prop::BorderRadius:
+        case Prop::BorderTopLeftRadius:
+        case Prop::BorderTopRightRadius:
+        case Prop::BorderBottomRightRadius:
+        case Prop::BorderBottomLeftRadius: {
+            Length l = parse_length(v);
+            if (p == Prop::BorderRadius || p == Prop::BorderTopLeftRadius)
+                storage.border_radius_tl[idx] = l;
+            if (p == Prop::BorderRadius || p == Prop::BorderTopRightRadius)
+                storage.border_radius_tr[idx] = l;
+            if (p == Prop::BorderRadius || p == Prop::BorderBottomRightRadius)
+                storage.border_radius_br[idx] = l;
+            if (p == Prop::BorderRadius || p == Prop::BorderBottomLeftRadius)
+                storage.border_radius_bl[idx] = l;
+            break;
+        }
+        case Prop::BackgroundSize:
+            storage.background_sizes[idx] = parse_bg_size(v);
+            break;
+        case Prop::BackgroundPosition:
+            storage.background_positions[idx] = parse_bg_position(v);
+            break;
+        case Prop::BackgroundRepeat:
+            storage.background_repeats[idx] = parse_bg_repeat(v);
+            break;
+        case Prop::FontFamily:
+            storage.font_families[idx] = parse_font_family(v);
+            break;
         default: break;
         }
     }
@@ -555,6 +591,7 @@ private:
             Prop::FontSize,
             Prop::FontWeight,
             Prop::FontStyle,
+            Prop::FontFamily,
             Prop::LineHeight,
             Prop::TextAlign,
             Prop::LetterSpacing,
@@ -571,6 +608,7 @@ private:
         case Prop::FontSize:      s.font_sizes[to] = s.font_sizes[from];      break;
         case Prop::FontWeight:    s.font_weights[to] = s.font_weights[from];    break;
         case Prop::FontStyle:     s.font_styles[to] = s.font_styles[from];     break;
+        case Prop::FontFamily:    s.font_families[to] = s.font_families[from]; break;
         case Prop::LineHeight:    s.line_heights[to] = s.line_heights[from];    break;
         case Prop::TextAlign:     s.text_aligns[to] = s.text_aligns[from];     break;
         case Prop::LetterSpacing: s.letter_spacings[to] = s.letter_spacings[from]; break;
@@ -895,5 +933,114 @@ private:
         auto it = named.find(v);
         if (it != named.end()) return style::Color::unpack(it->second);
         return { 0,0,0,255 };
+    }
+    static BackgroundRepeat parse_bg_repeat(const std::string& v) {
+        if (v == "no-repeat") return BackgroundRepeat::NoRepeat;
+        if (v == "repeat-x")  return BackgroundRepeat::RepeatX;
+        if (v == "repeat-y")  return BackgroundRepeat::RepeatY;
+        return BackgroundRepeat::Repeat;
+    }
+
+    static BackgroundSize parse_bg_size(const std::string& v) {
+        BackgroundSize s;
+        if (v == "cover") { s.kind = BgSizeKind::Cover;   return s; }
+        if (v == "contain") { s.kind = BgSizeKind::Contain; return s; }
+        if (v == "auto" || v.empty()) return s;
+
+        // 1 или 2 токена.
+        size_t i = 0, n = v.size();
+        while (i < n && std::isspace((unsigned char)v[i])) ++i;
+        size_t s0 = i;
+        while (i < n && !std::isspace((unsigned char)v[i])) ++i;
+        if (i == s0) return s;
+        std::string first = v.substr(s0, i - s0);
+
+        while (i < n && std::isspace((unsigned char)v[i])) ++i;
+        size_t s1 = i;
+        while (i < n && !std::isspace((unsigned char)v[i])) ++i;
+        std::string second = (i > s1) ? v.substr(s1, i - s1) : "";
+
+        auto to_len = [](const std::string& tok) {
+            if (tok == "auto" || tok.empty()) return Length{ -1.0f, Unit::Auto };
+            return parse_length(tok);
+            };
+        s.kind = BgSizeKind::Explicit;
+        s.w = to_len(first);
+        s.h = to_len(second);
+        // «auto auto» → считаем auto-режимом.
+        if (s.w.is_auto() && s.h.is_auto()) s.kind = BgSizeKind::Auto;
+        return s;
+    }
+
+    static BackgroundPosition parse_bg_position(const std::string& v) {
+        BackgroundPosition p;   // 0% 0% (left top) по умолчанию
+
+        std::vector<std::string> toks;
+        {
+            size_t i = 0, n = v.size();
+            while (i < n) {
+                while (i < n && std::isspace((unsigned char)v[i])) ++i;
+                size_t s = i;
+                while (i < n && !std::isspace((unsigned char)v[i])) ++i;
+                if (i > s) toks.push_back(v.substr(s, i - s));
+            }
+        }
+        if (toks.empty()) return p;
+
+        auto keyword_pct = [](const std::string& t) -> int {
+            if (t == "left" || t == "top")    return 0;
+            if (t == "center")                return 50;
+            if (t == "right" || t == "bottom") return 100;
+            return -1;
+            };
+        auto is_y_only = [](const std::string& t) {
+            return t == "top" || t == "bottom";
+            };
+        auto is_x_only = [](const std::string& t) {
+            return t == "left" || t == "right";
+            };
+        auto to_len = [&](const std::string& t, int default_pct) -> Length {
+            int k = keyword_pct(t);
+            if (k >= 0) return Length{ float(k), Unit::Percent };
+            (void)default_pct;
+            return parse_length(t);
+            };
+
+        if (toks.size() == 1) {
+            const std::string& t = toks[0];
+            if (is_y_only(t)) {
+                p.x = { 50.0f, Unit::Percent };
+                p.y = to_len(t, 50);
+            }
+            else if (is_x_only(t) || t == "center") {
+                p.x = to_len(t, 50);
+                p.y = { 50.0f, Unit::Percent };
+            }
+            else {
+                // длина — X, Y = center.
+                p.x = parse_length(t);
+                p.y = { 50.0f, Unit::Percent };
+            }
+            return p;
+        }
+
+        // Два токена: X Y.
+        if (is_y_only(toks[0]) && is_x_only(toks[1])) {
+            // "top left" — переставим.
+            p.y = to_len(toks[0], 0);
+            p.x = to_len(toks[1], 0);
+        }
+        else {
+            p.x = to_len(toks[0], 0);
+            p.y = to_len(toks[1], 0);
+        }
+        return p;
+    }
+    static std::string parse_font_family(const std::string& v) {
+        // Просто обрезаем пробелы. Кавычки и запятые обработаем в Qt-слое.
+        size_t b = 0, e = v.size();
+        while (b < e && std::isspace((unsigned char)v[b])) ++b;
+        while (e > b && std::isspace((unsigned char)v[e - 1])) --e;
+        return v.substr(b, e - b);
     }
 };

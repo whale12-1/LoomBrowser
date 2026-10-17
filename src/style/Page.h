@@ -36,8 +36,10 @@ public:
     // tm Ч текстовые метрики дл€ точного совпадени€ с Qt painter'ом.
     // ≈сли не заданы Ч layout использует эвристику (0.55*fs на символ).
     void loadHtml(const std::string& html,
+        const std::string& base_url,
+        std::function<std::string(const std::string&)> fetch_resource,
         float viewport_w, float viewport_h,
-        const LayoutTreeBuilder::TextMetrics& tm = {});
+        const LayoutTreeBuilder::TextMetrics& tm);
 
     // ѕересчЄт layout + display list после мутаций DOM.
     void relayout();
@@ -83,6 +85,7 @@ private:
     std::unique_ptr<LayoutNode> layout_;
     DisplayList                 display_list_;
     bool                        dom_dirty_ = false;
+    std::string                 external_css_;
 
     float viewport_w_ = 1024.0f;
     float viewport_h_ = 768.0f;

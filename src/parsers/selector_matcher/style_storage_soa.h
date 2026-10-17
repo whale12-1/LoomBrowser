@@ -11,6 +11,8 @@ using style::Position;  using style::Float;
 using style::Overflow; using style::Visibility; using style::BoxSizing;
 using style::TextAlign; using style::FontStyle; using style::WhiteSpace;
 using style::FlexDir;  using style::Justify;    using style::AlignItems;
+using style::BackgroundRepeat; using style::BackgroundSize;
+using style::BackgroundPosition; using style::BgSizeKind;
 using style::VerticalAlign;using style::Clear;
 using style::Length;   using style::Unit;       using style::Color;
 using style::Prop;     using style::PROP_MASK_WORDS;
@@ -64,11 +66,21 @@ struct StyleStorageSoA {
     std::vector<Length>     padding_top, padding_right, padding_bottom, padding_left;
     std::vector<Length>     border_top_width, border_right_width, border_bottom_width, border_left_width;
     std::vector<uint32_t>   border_top_colors, border_right_colors, border_bottom_colors, border_left_colors;
+    // border-radius: четыре угла, Length (px/em/% — резолвится
+// в display_list_builder'е, где известны размеры).
+    std::vector<Length>   border_radius_tl, border_radius_tr,
+        border_radius_br, border_radius_bl;
+
+    // background-*.
+    std::vector<BackgroundSize>     background_sizes;
+    std::vector<BackgroundPosition> background_positions;
+    std::vector<BackgroundRepeat>   background_repeats;
     std::vector<Length>     flex_bases;
     std::vector<float>      flex_grows, flex_shrinks;
 
     // ����� � �������� � px (����� ��� resolve em � �����)
     std::vector<float>      font_sizes;
+    std::vector<std::string> font_families;       // Наследуемое свойство
     std::vector<float>      line_heights;         // 0.0 = normal
     std::vector<float>      letter_spacings;
 
@@ -144,11 +156,20 @@ struct StyleStorageSoA {
         border_right_colors.push_back(0x000000FFu);
         border_bottom_colors.push_back(0x000000FFu);
         border_left_colors.push_back(0x000000FFu);
+        border_radius_tl.push_back({ 0.0f, Unit::Px });
+        border_radius_tr.push_back({ 0.0f, Unit::Px });
+        border_radius_br.push_back({ 0.0f, Unit::Px });
+        border_radius_bl.push_back({ 0.0f, Unit::Px });
+
+        background_sizes.push_back({});      // Auto
+        background_positions.push_back({});  // 0% 0%
+        background_repeats.push_back(BackgroundRepeat::Repeat);
         flex_bases.push_back({ -1.0f, Unit::Auto });
         flex_grows.push_back(0.0f);
         flex_shrinks.push_back(1.0f);
 
         font_sizes.push_back(16.0f);
+        font_families.push_back(""); // пустая строка = дефолтный шрифт системы
         line_heights.push_back(0.0f);
         letter_spacings.push_back(0.0f);
 

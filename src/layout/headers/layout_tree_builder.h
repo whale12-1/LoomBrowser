@@ -34,23 +34,21 @@ public:
     struct TextMetrics {
         std::function<float(const std::string& text,
             float font_size,
+            const std::string& font_family,
             bool  bold,
             bool  italic)> measure_width;
 
         std::function<float(float font_size,
+            const std::string& font_family,
             bool  bold)> line_spacing;
 
-        // Метрики для baseline alignment: расстояние от верха глифов
-        // до базовой линии и от базовой линии до низа глифов.
-        // Опциональны: если не заданы — работает эвристика 0.8 / 0.2 от fs.
-        std::function<float(float font_size, bool bold)> ascent;
-        std::function<float(float font_size, bool bold)> descent;
+        std::function<float(float font_size, const std::string& font_family, bool bold)> ascent;
+        std::function<float(float font_size, const std::string& font_family, bool bold)> descent;
 
         bool hasWidth()    const { return static_cast<bool>(measure_width); }
         bool hasHeight()   const { return static_cast<bool>(line_spacing); }
         bool hasBaseline() const {
-            return static_cast<bool>(ascent)
-                && static_cast<bool>(descent);
+            return static_cast<bool>(ascent) && static_cast<bool>(descent);
         }
     };
 
@@ -138,6 +136,7 @@ private:
 
         const uint32_t si = effective_style_idx(node);
         const float fs = storage.font_sizes[si];
+        const std::string& family = storage.font_families[si];
         const bool bold = storage.font_weights[si] >= 700;
         const auto fstyle = storage.font_styles[si];
         const bool italic = (fstyle == style::FontStyle::Italic
@@ -145,7 +144,7 @@ private:
         const Viewport vp{};
         const auto line_height = [&]() {
             if (storage.line_heights[si] == 0.0f && tm.hasHeight())
-                return tm.line_spacing(fs, bold);
+                return tm.line_spacing(fs, family, bold);
             return style::resolve_line_height(storage, si);
             };
         const auto box_extra = [&]() {
@@ -163,7 +162,7 @@ private:
 
         if (node->type == BoxType::Text) {
             const float width = tm.hasWidth()
-                ? tm.measure_width(node->text_content, fs, bold, italic)
+                ? tm.measure_width(node->text_content, fs, family, bold, italic)
                 : node->text_content.size() * std::max(1.0f, fs * 0.55f);
             return { width, line_height() };
         }
@@ -1278,12 +1277,13 @@ private:
 
         // Strut (без изменений).
         const float strut_fs = storage.font_sizes[si_align];
+        const std::string& strut_family = storage.font_families[si_align];
         const bool  strut_bold = storage.font_weights[si_align] >= 700;
         const float strut_lh = style::resolve_line_height(storage, si_align);
         float strut_asc, strut_desc;
         if (tm.hasBaseline()) {
-            strut_asc = tm.ascent(strut_fs, strut_bold);
-            strut_desc = tm.descent(strut_fs, strut_bold);
+            strut_asc = tm.ascent(strut_fs, strut_family, strut_bold);
+            strut_desc = tm.descent(strut_fs, strut_family, strut_bold);
         }
         else {
             strut_asc = strut_fs * 0.8f;
@@ -1925,6 +1925,7 @@ private:
     {
         const uint32_t si = effective_style_idx(node);
         const float fs = storage.font_sizes[si];
+        const std::string& family = storage.font_families[si];
         const bool bold = storage.font_weights[si] >= 700;
         const auto fstyle = storage.font_styles[si];
         const bool italic = fstyle == style::FontStyle::Italic
@@ -1933,7 +1934,7 @@ private:
         float lh;
         const float raw_lh = storage.line_heights[si];
         if (raw_lh == 0.0f && tm.hasHeight()) {
-            lh = tm.line_spacing(fs, bold);
+            lh = tm.line_spacing(fs,family, bold);
         }
         else {
             lh = style::resolve_line_height(storage, si);
@@ -1941,7 +1942,7 @@ private:
 
         float text_w;
         if (tm.hasWidth()) {
-            text_w = tm.measure_width(node->text_content, fs, bold, italic);
+            text_w = tm.measure_width(node->text_content, fs, family, bold, italic);
         }
         else {
             text_w = node->text_content.size() * std::max(1.0f, fs * 0.55f);
@@ -1960,8 +1961,8 @@ private:
         // half-leading сверху и снизу — CSS 2.1 §10.8.
         float asc, desc;
         if (tm.hasBaseline()) {
-            asc = tm.ascent(fs, bold);
-            desc = tm.descent(fs, bold);
+            asc = tm.ascent(fs, family, bold);
+            desc = tm.descent(fs, family, bold);
         }
         else {
             asc = fs * 0.8f;
