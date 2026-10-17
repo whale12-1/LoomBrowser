@@ -9,7 +9,10 @@ enum class BoxType {
     Inline,
     AnonymousBlock,
     Text,
-    Image
+    Image,
+    Table,          // <table>
+    TableRow,       // <tr>
+    TableCell       // <td>, <th>
 };
 
 struct LayoutGeometry {
@@ -42,6 +45,8 @@ struct LayoutNode {
     LayoutNode* parent{ nullptr };
     std::vector<std::unique_ptr<LayoutNode>> children;
 
+    int colspan{ 1 };
+    int rowspan{ 1 };
     // Non-owning pointers to absolute descendants for which this node is the
     // containing block. Ownership remains with the direct parent via children.
     // The list is populated during Phase 1.
@@ -54,7 +59,13 @@ struct LayoutNode {
 
     bool is_text()         const { return type == BoxType::Text; }
     bool is_anonymous()    const { return type == BoxType::AnonymousBlock; }
-    bool is_block_level()  const { return type == BoxType::Block || type == BoxType::AnonymousBlock; }
+    bool is_block_level()  const {
+        return type == BoxType::Block
+            || type == BoxType::AnonymousBlock
+            || type == BoxType::Table
+            || type == BoxType::TableRow
+            || type == BoxType::TableCell;
+    }
     bool is_inline_level() const {
         return type == BoxType::Inline
             || type == BoxType::Text

@@ -149,7 +149,10 @@ private:
         if (!node_hidden
             && (node->type == BoxType::Block
                 || node->type == BoxType::Inline
-                || node->type == BoxType::Image)
+                || node->type == BoxType::Image
+                || node->type == BoxType::Table
+                || node->type == BoxType::TableRow
+                || node->type == BoxType::TableCell)
             && node->style_soa_idx != UINT32_MAX)
         {
             const uint32_t si = node->style_soa_idx;

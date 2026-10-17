@@ -217,6 +217,14 @@ void Page::rebuild() {
     };
 
     // 2. Каскад в SoA.
+    qDebug() << "Author CSS preview:" << QString::fromStdString(author_css.substr(0, 200));
+
+    // Проверим, сколько правил именно в author
+    for (const auto& rule : author->rules) {
+        if (!rule.selectors.empty()) {
+            qDebug() << "Rule selector: " << rule.selectors[0].compounds[0].parts[0].name.c_str();
+        }
+    }
     storage_ = StyleTreeBuilder::build(document_, sources);
 
 

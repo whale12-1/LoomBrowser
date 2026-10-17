@@ -54,6 +54,11 @@ sub, sup  { font-size: 0.83em; }
 img       { max-width: 100%; }
 a         { text-decoration: underline; }
 a[href]   { color: #0000EE; }
+/* === Таблицы === */
+table { display: table; }
+thead, tbody, tfoot { display: block; }
+tr { display: table-row; }
+td, th { display: table-cell; padding: 1px; }
 )CSS";
 
 } // namespace ua_css

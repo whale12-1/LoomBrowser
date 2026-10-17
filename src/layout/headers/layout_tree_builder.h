@@ -270,15 +270,24 @@ private:
                 std::string_view k(kv.first.data(), kv.first.size());
                 if (k == "src") {
                     src.assign(kv.second.data(), kv.second.size());
-                    break;
+                }
+                // Читаем размеры из HTML-атрибутов
+                if (k == "width") {
+                    try { node->intrinsic_width = std::stof(std::string(kv.second)); }
+                    catch (...) {}
+                }
+                if (k == "height") {
+                    try { node->intrinsic_height = std::stof(std::string(kv.second)); }
+                    catch (...) {}
                 }
             }
             node->image_src = src;
 
-            if (!src.empty() && img_metrics.hasIntrinsic()) {
+            // Если размеры не были заданы в HTML, пытаемся узнать их из файла
+            if (!src.empty() && img_metrics.hasIntrinsic() && (node->intrinsic_width == 0 || node->intrinsic_height == 0)) {
                 auto [w, h] = img_metrics.intrinsic_size(src);
-                node->intrinsic_width = w;
-                node->intrinsic_height = h;
+                if (node->intrinsic_width == 0) node->intrinsic_width = w;
+                if (node->intrinsic_height == 0) node->intrinsic_height = h;
             }
             return node;
         }
@@ -310,6 +319,8 @@ private:
                 if (sub) node->add_child(std::move(sub));
             }
         }
+
+
         return node;
     }
 
@@ -356,18 +367,16 @@ private:
         case style::Display::Block:
         case style::Display::Flex:
         case style::Display::Grid:
-        case style::Display::Table:
-        case style::Display::TableRow:
-        case style::Display::TableCell:
             return BoxType::Block;
-
+        case style::Display::Table:      return BoxType::Table;
+        case style::Display::TableRow:   return BoxType::TableRow;
+        case style::Display::TableCell:  return BoxType::TableCell;
         case style::Display::Inline:
         case style::Display::InlineBlock:
         case style::Display::InlineFlex:
         case style::Display::InlineGrid:
         case style::Display::Contents:
             return BoxType::Inline;
-
         case style::Display::None:
             break;
         }
@@ -864,7 +873,192 @@ private:
             + g.padding_bottom + g.border_bottom;
     }
 
+    static void layout_table(LayoutNode* table,
+        float parent_width,
+        const Viewport& vp,
+        const StyleStorageSoA& storage, // <--- ДОБАВЬ const
+        float root_fs,
+        const TextMetrics& tm)
+    {
+        auto& g = table->geometry;
+        resolve_box_model(table, storage, vp, parent_width, root_fs);
 
+        const uint32_t si = table->style_soa_idx;
+        const float fs = (si != UINT32_MAX) ? storage.font_sizes[si] : 16.0f;
+
+        float h_extra = g.margin_left + g.margin_right + g.padding_left + g.padding_right + g.border_left + g.border_right;
+        float content_width = std::max(0.0f, parent_width - h_extra);
+
+        if (si != UINT32_MAX) {
+            const style::Length& w = storage.widths[si];
+            if (!w.is_auto() && !w.is_none()) {
+                float spec = resolve_px(w, fs, root_fs, vp, parent_width);
+                if (storage.box_sizings[si] == BoxSizing::BorderBox)
+                    spec -= (g.padding_left + g.padding_right + g.border_left + g.border_right);
+                content_width = std::max(0.0f, spec);
+            }
+        }
+
+        // Читаем cellpadding (отступы в ячейках)
+        float cell_padding = 0.0f;
+        if (si != UINT32_MAX) {
+            const DOMNode* dom = storage.dom_nodes[si];
+            if (dom) {
+                for (const auto& kv : dom->attributes) {
+                    std::string_view k(kv.first.data(), kv.first.size());
+                    if (k == "cellpadding") {
+                        try { cell_padding = std::stof(std::string(kv.second)); }
+                        catch (...) {}
+                    }
+                }
+            }
+        }
+
+        // 1. Собираем все строки (пропускаем tbody/thead)
+        std::vector<LayoutNode*> rows;
+        std::function<void(LayoutNode*)> collect_rows = [&](LayoutNode* n) {
+            for (auto& c : n->children) {
+                if (c->type == BoxType::TableRow) rows.push_back(c.get());
+                else if (c->type == BoxType::Block) collect_rows(c.get());
+            }
+            };
+        collect_rows(table);
+
+        if (rows.empty()) {
+            g.width = g.border_left + g.padding_left + content_width + g.padding_right + g.border_right;
+            g.height = g.border_top + g.padding_top + g.border_bottom + g.padding_bottom;
+            return;
+        }
+
+        struct CellPlacement {
+            LayoutNode* cell;
+            int r, c;
+            int colspan, rowspan;
+        };
+        std::vector<CellPlacement> placements;
+
+        int num_cols = 0;
+        std::vector<std::vector<int>> occupied;
+
+        // 2. Строим сетку (Grid) с учетом colspan/rowspan
+        for (int r = 0; r < (int)rows.size(); ++r) {
+            int c = 0;
+            for (auto& child : rows[r]->children) {
+                if (child->type != BoxType::TableCell) continue;
+
+                while (true) {
+                    if (r >= (int)occupied.size()) occupied.resize(r + 1);
+                    if (c >= (int)occupied[r].size()) occupied[r].resize(c + 1, 0);
+                    if (occupied[r][c] == 0) break;
+                    c++;
+                }
+
+                int colspan = std::max(1, child->colspan);
+                int rowspan = std::max(1, child->rowspan);
+
+                for (int rr = 0; rr < rowspan; ++rr) {
+                    if (r + rr >= (int)occupied.size()) occupied.resize(r + rr + 1);
+                    for (int cc = 0; cc < colspan; ++cc) {
+                        if (c + cc >= (int)occupied[r + rr].size()) occupied[r + rr].resize(c + cc + 1, 0);
+                        occupied[r + rr][c + cc] = 1;
+                    }
+                }
+
+                placements.push_back({ child.get(), r, c, colspan, rowspan });
+                num_cols = std::max(num_cols, c + colspan);
+                c += colspan;
+            }
+        }
+
+        // 3. Вычисляем ширины колонок
+        std::vector<float> col_widths(num_cols, 0.0f);
+
+        for (auto& p : placements) {
+            float cell_max_w = measure_intrinsic(p.cell, storage, root_fs, tm).content_width;
+            float per_col = cell_max_w / p.colspan;
+            for (int i = 0; i < p.colspan; ++i) {
+                col_widths[p.c + i] = std::max(col_widths[p.c + i], per_col);
+            }
+        }
+
+        for (auto& p : placements) {
+            if (p.cell->style_soa_idx != UINT32_MAX) {
+                const auto& w = storage.widths[p.cell->style_soa_idx];
+                if (!w.is_auto() && !w.is_none()) {
+                    float spec = resolve_px(w, storage.font_sizes[p.cell->style_soa_idx], root_fs, vp, content_width);
+                    float per_col = spec / p.colspan;
+                    for (int i = 0; i < p.colspan; ++i) {
+                        col_widths[p.c + i] = std::max(col_widths[p.c + i], per_col);
+                    }
+                }
+            }
+        }
+
+        float total_w = 0;
+        for (float w : col_widths) total_w += w;
+
+        bool width_auto = true;
+        if (si != UINT32_MAX) {
+            const style::Length& w = storage.widths[si];
+            if (!w.is_auto() && !w.is_none()) width_auto = false;
+        }
+
+        if (width_auto) {
+            content_width = total_w;
+        }
+        else {
+            if (total_w < content_width) {
+                float extra = (content_width - total_w) / num_cols;
+                for (int i = 0; i < num_cols; ++i) col_widths[i] += extra;
+            }
+            else if (total_w > content_width && total_w > 0) {
+                float scale = content_width / total_w;
+                for (int i = 0; i < num_cols; ++i) col_widths[i] *= scale;
+            }
+        }
+
+        // 4. Расставляем ячейки
+        float inner_x = g.x + g.border_left + g.padding_left;
+        float y_cursor = g.y + g.border_top + g.padding_top;
+        std::vector<float> row_y(rows.size(), 0.0f);
+
+        for (int r = 0; r < (int)rows.size(); ++r) {
+            row_y[r] = y_cursor;
+            float row_height = 0;
+
+            for (auto& p : placements) {
+                if (p.r == r) {
+                    float cell_x = inner_x;
+                    for (int i = 0; i < p.c; ++i) cell_x += col_widths[i];
+
+                    float cell_w = 0;
+                    for (int i = 0; i < p.colspan; ++i) cell_w += col_widths[p.c + i];
+
+                    p.cell->geometry.x = cell_x;
+                    p.cell->geometry.y = y_cursor;
+
+                    layout_block_container(p.cell, cell_w, vp, storage, root_fs, tm, nullptr, cell_w, cell_padding);
+                    row_height = std::max(row_height, p.cell->geometry.height);
+                }
+            }
+
+            // Выравниваем высоту всех ячеек в строке
+            for (auto& p : placements) {
+                if (p.r == r) p.cell->geometry.height = row_height;
+            }
+            y_cursor += row_height;
+        }
+
+        g.width = g.border_left + g.padding_left + content_width + g.padding_right + g.border_right;
+        g.height = y_cursor - g.y + g.padding_bottom + g.border_bottom;
+
+        // Обновляем координаты самих строк (нужно для рендерера)
+        for (int r = 0; r < (int)rows.size(); ++r) {
+            rows[r]->geometry.x = inner_x;
+            rows[r]->geometry.y = row_y[r];
+            rows[r]->geometry.width = content_width;
+        }
+    }
     // Flex-контейнер — новый путь в диспетчере.
     // Не добавляем BoxType::Flex: flex — это режим layout,
     // а не тип бокса. Внешне контейнер остаётся Block.
@@ -884,6 +1078,13 @@ private:
         node->geometry.x = abs_x;
         node->geometry.y = abs_y;
 
+        // --- НОВОЕ: Диспетчеризация таблиц ---
+        if (node->type == BoxType::Table) {
+            layout_table(node, parent_width, vp, storage, root_fs, tm);
+            return;
+        }
+        // -------------------------------------
+
         if (is_flex_container(node, storage)) {
             layout_flex_container(node, parent_width, vp, storage, root_fs, tm);
             return;
@@ -895,6 +1096,8 @@ private:
             node->geometry.width = parent_width;
             break;
         case BoxType::Block:
+        case BoxType::TableCell: // <--- Добавили
+        case BoxType::TableRow:  // <--- Добавили
             layout_block_container(node, parent_width, vp, storage, root_fs,
                 tm, parent_fc, override_content_width);
             break;
@@ -1605,12 +1808,21 @@ private:
         float root_fs,
         const TextMetrics& tm,
         FloatContext* parent_fc,
-        float override_content_width = -1.0f)
+        float override_content_width = -1.0f,
+        float extra_padding = 0.0f) // <--- ДОБАВЬ ЭТО
     {
         auto& g = node->geometry;
-        const bool is_real = (node->type == BoxType::Block);
+        const bool is_real = (node->type == BoxType::Block || node->type == BoxType::TableCell);
 
         if (is_real) resolve_box_model(node, storage, vp, parent_width, root_fs);
+
+        // --- НОВОЕ: Применяем cellpadding ---
+        if (is_real && extra_padding > 0.0f) {
+            g.padding_top += extra_padding;
+            g.padding_right += extra_padding;
+            g.padding_bottom += extra_padding;
+            g.padding_left += extra_padding;
+        }
 
         const float h_extra = g.margin_left + g.margin_right
             + g.padding_left + g.padding_right
