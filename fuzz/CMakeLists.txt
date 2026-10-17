@@ -31,12 +31,13 @@ get_filename_component(REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
 #  ядро дл€ фаззеров Ч парсеры + style + layout, без Qt.
 # ============================================================
 set(FUZZ_COMMON_SOURCES "")
-foreach(_cand
-        ${REPO_ROOT}/src/parsers/html_parser/html_parser.cpp
-        ${REPO_ROOT}/src/parsers/css_parser/css_parser.cpp
-        ${REPO_ROOT}/src/parsers/selector_matcher/selector_matcher.cpp
-        ${REPO_ROOT}/src/layout/layout_tree_builder.cpp
-        ${REPO_ROOT}/src/parsers/selector_matcher/display_list_builder.cpp)
+    foreach(_cand
+            ${REPO_ROOT}/src/parsers/html_parser/html_parser.cpp
+            ${REPO_ROOT}/src/parsers/css_parser/css_parser.cpp
+            ${REPO_ROOT}/src/parsers/selector_matcher/selector_matcher.cpp
+            ${REPO_ROOT}/src/parsers/selector_matcher/style_properties.cpp
+            ${REPO_ROOT}/src/layout/layout_tree_builder.cpp
+            ${REPO_ROOT}/src/parsers/selector_matcher/display_list_builder.cpp)
     if(EXISTS "${_cand}")
         list(APPEND FUZZ_COMMON_SOURCES "${_cand}")
     endif()
