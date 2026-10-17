@@ -13,6 +13,7 @@
 #include "selector_matcher.h"
 #include "style_origin.h"
 #include "../css_parser/headers/css_parser.h"
+#include "style_properties.h"
 
 // ============================================================
 //  Прозрачный хэш: позволяет unordered_map<std::string, ...>::find(string_view)
@@ -309,7 +310,7 @@ private:
                 const Declaration& d = rule.declarations[di];
 
                 Prop p;
-                if (!lookup_prop(d.property, p)) continue;
+                if (!style_props::lookup_css_prop(d.property, p)) continue;
 
                 Winner w;
                 w.declaration = d;
@@ -327,10 +328,29 @@ private:
 
         std::string_view inline_style;
         for (const auto& attribute : node->attributes) {
-            const std::string_view name(attribute.first.data(), attribute.first.size());
+            // Извлекаем имя и значение атрибута
+            std::string_view name(attribute.first.data(), attribute.first.size());
+            std::string_view value(attribute.second.data(), attribute.second.size());
+
             if (name == "style") {
-                inline_style = std::string_view(attribute.second.data(), attribute.second.size());
-                break;
+                // Нашли inline-стиль, сохраняем (но не делаем break, чтобы проверить остальные!)
+                inline_style = value;
+            }
+            else {
+                // Проверяем, не является ли атрибут старым HTML-тегом (bgcolor, width, align и т.д.)
+                std::string css_prop = style_props::map_html_attr_to_css(std::string(name));
+                if (!css_prop.empty()) {
+                    Declaration d;
+                    d.property = css_prop;
+                    d.value = std::string(value);
+
+                    Prop p;
+                    if (style_props::lookup_css_prop(d.property, p)) {
+                        // Применяем сразу к storage (у HTML-атрибутов самый низкий приоритет,
+                        // поэтому в конце функции их перезапишут нормальные CSS-стили, если они есть)
+                        apply_declaration(p, d, idx, parent_idx, storage);
+                    }
+                }
             }
         }
 
@@ -343,7 +363,7 @@ private:
                 const auto& declarations = inline_sheet->rules.front().declarations;
                 for (const Declaration& d : declarations) {
                     Prop p;
-                    if (!lookup_prop(d.property, p)) continue;
+                    if (!style_props::lookup_css_prop(d.property, p)) continue;
 
                     Winner w;
                     w.declaration = d;
@@ -371,78 +391,7 @@ private:
         finalize(idx, storage);
     }
 
-    static bool lookup_prop(const std::string& name, Prop& out) {
-        using P = Prop;
-        static const std::unordered_map<std::string, P> table = {
-            {"display",        P::Display},
-            {"position",       P::Position},
-            {"float",          P::Float},
-            {"clear",          P::Clear},
-            {"overflow",       P::Overflow},
-            {"visibility",     P::Visibility},
-            {"box-sizing",     P::BoxSizing},
-            {"z-index",        P::ZIndex},
-            {"opacity",        P::Opacity},
-            {"color",          P::Color},
-            {"background-color", P::BackgroundColor},
-            {"background-image", P::BackgroundImage},
-            {"font-size",      P::FontSize},
-            {"font-weight",    P::FontWeight},
-            {"font-style",     P::FontStyle},
-            {"font-family",    P::FontFamily},
-            {"line-height",    P::LineHeight},
-            {"text-align",     P::TextAlign},
-            {"text-decoration", P::TextDecoration},
-            {"letter-spacing", P::LetterSpacing},
-            {"white-space",    P::WhiteSpace},
-            {"width",          P::Width},
-            {"height",         P::Height},
-            {"min-width",      P::MinWidth},
-            {"max-width",      P::MaxWidth},
-            {"min-height",     P::MinHeight},
-            {"max-height",     P::MaxHeight},
-            {"top",            P::Top},
-            {"right",          P::Right},
-            {"bottom",         P::Bottom},
-            {"left",           P::Left},
-            {"margin-top",     P::MarginTop},
-            {"margin-right",   P::MarginRight},
-            {"margin-bottom",  P::MarginBottom},
-            {"margin-left",    P::MarginLeft},
-            {"padding-top",    P::PaddingTop},
-            {"padding-right",  P::PaddingRight},
-            {"padding-bottom", P::PaddingBottom},
-            {"padding-left",   P::PaddingLeft},
-            {"border-top-width",    P::BorderTopWidth},
-            {"border-right-width",  P::BorderRightWidth},
-            {"border-bottom-width", P::BorderBottomWidth},
-            {"border-left-width",   P::BorderLeftWidth},
-            {"border-top-color",    P::BorderTopColor},
-            {"border-right-color",  P::BorderRightColor},
-            {"border-bottom-color", P::BorderBottomColor},
-            {"border-left-color",   P::BorderLeftColor},
-            {"border-radius",              P::BorderRadius},
-            {"border-top-left-radius",     P::BorderTopLeftRadius},
-            {"border-top-right-radius",    P::BorderTopRightRadius},
-            {"border-bottom-right-radius", P::BorderBottomRightRadius},
-            {"border-bottom-left-radius",  P::BorderBottomLeftRadius},
-            {"background-size",            P::BackgroundSize},
-            {"background-position",        P::BackgroundPosition},
-            {"background-repeat",          P::BackgroundRepeat},
-            {"flex-direction",  P::FlexDirection},
-            {"justify-content", P::JustifyContent},
-            {"align-items",     P::AlignItems},
-            {"vertical-align",  P::VerticalAlign},
-            {"flex-grow",       P::FlexGrow},
-            {"flex-shrink",     P::FlexShrink},
-            {"flex-basis",      P::FlexBasis},
-        };
-        auto it = table.find(name);
-        if (it == table.end()) return false;
-        out = it->second;
-        return true;
-    }
-
+   
     static void apply_declaration(Prop p, const Declaration& d,
         uint32_t idx, uint32_t parent_idx,
         StyleStorageSoA& storage)
@@ -583,23 +532,13 @@ private:
         }
     }
 
-    static void inherit_from_parent(uint32_t idx, uint32_t parent_idx,
-        StyleStorageSoA& storage)
-    {
-        static constexpr Prop kInherited[] = {
-            Prop::Color,
-            Prop::FontSize,
-            Prop::FontWeight,
-            Prop::FontStyle,
-            Prop::FontFamily,
-            Prop::LineHeight,
-            Prop::TextAlign,
-            Prop::LetterSpacing,
-            Prop::WhiteSpace,
-            Prop::Visibility,
-        };
-        for (Prop p : kInherited)
-            copy_prop(p, parent_idx, idx, storage);
+    static void inherit_from_parent(uint32_t idx, uint32_t parent_idx, StyleStorageSoA& storage) {
+        for (size_t i = 0; i < style::PROP_COUNT; ++i) {
+            Prop p = static_cast<Prop>(i);
+            if (style_props::is_inherited(p)) {
+                copy_prop(p, parent_idx, idx, storage);
+            }
+        }
     }
 
     static void copy_prop(Prop p, uint32_t from, uint32_t to, StyleStorageSoA& s) {
