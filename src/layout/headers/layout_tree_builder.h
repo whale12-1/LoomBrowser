@@ -219,15 +219,18 @@ private:
         const StyleStorageSoA& storage,
         float container_content_width,
         float root_fs,
-        const TextMetrics& tm)
+        const TextMetrics& tm,
+        bool is_row)
     {
         if (item->style_soa_idx == UINT32_MAX)
-            return measure_intrinsic(item, storage, root_fs, tm).content_width;
+            return is_row ? measure_intrinsic(item, storage, root_fs, tm).content_width
+            : measure_intrinsic(item, storage, root_fs, tm).content_height;
 
         const uint32_t si = item->style_soa_idx;
         const float fs = storage.font_sizes[si];
         const style::Length& fb = storage.flex_bases[si];
         const style::Length& w = storage.widths[si];
+        const style::Length& h = storage.heights[si];
         const Viewport vp{};
         const auto resolve = [&](const style::Length& length) {
             return length.unit == Unit::Percent
@@ -236,8 +239,15 @@ private:
             };
 
         if (!fb.is_auto() && !fb.is_none()) return resolve(fb);
-        if (!w.is_auto() && !w.is_none()) return resolve(w);
-        return measure_intrinsic(item, storage, root_fs, tm).content_width;
+
+        if (is_row) {
+            if (!w.is_auto() && !w.is_none()) return resolve(w);
+            return measure_intrinsic(item, storage, root_fs, tm).content_width;
+        }
+        else {
+            if (!h.is_auto() && !h.is_none()) return resolve(h);
+            return measure_intrinsic(item, storage, root_fs, tm).content_height;
+        }
     }
 
     // =================================================================
@@ -579,315 +589,270 @@ private:
         // =================================================================
     //  Flex-контейнер
     // =================================================================
-    static void layout_flex_container(LayoutNode* node,
-        float parent_width,
-        const Viewport& vp,
-        const StyleStorageSoA& storage,
-        float root_fs,
-        const TextMetrics& tm)
+    static void layout_flex_container(LayoutNode* node, float parent_width,
+        const Viewport& vp, const StyleStorageSoA& storage, float root_fs, const TextMetrics& tm,
+        float override_content_width = -1.0f, float override_content_height = -1.0f)
     {
         auto& g = node->geometry;
         resolve_box_model(node, storage, vp, parent_width, root_fs);
 
-        const uint32_t node_si = (node->style_soa_idx != UINT32_MAX)
-            ? node->style_soa_idx
-            : effective_style_idx(node);
+        const uint32_t node_si = (node->style_soa_idx != UINT32_MAX) ? node->style_soa_idx : effective_style_idx(node);
+        const float fs = storage.font_sizes[node_si];
+        const bool border_box = (storage.box_sizings[node_si] == BoxSizing::BorderBox);
+        const float pb_h = g.padding_left + g.padding_right + g.border_left + g.border_right;
+        const float pb_v = g.padding_top + g.padding_bottom + g.border_top + g.border_bottom;
 
-        // -------- content_width контейнера --------
-        const float h_extra = g.margin_left + g.margin_right
-            + g.padding_left + g.padding_right
-            + g.border_left + g.border_right;
-        float content_width = std::max(0.0f, parent_width - h_extra);
-
-        // FIX: определяем, auto ли ширина контейнера — от этого зависит
-        // shrink-to-fit ниже. Тесты (и inline-flex по спеке) ожидают,
-        // что auto-width flex-контейнер сжимается по содержимому.
-        bool container_width_auto = true;
-
+        // 1. Оси и направления
+        style::FlexDir dir = style::FlexDir::Row;
+        style::FlexWrap wrap = style::FlexWrap::Nowrap;
         if (node->style_soa_idx != UINT32_MAX) {
-            const float fs = storage.font_sizes[node_si];
-            const bool border_box = (storage.box_sizings[node_si] == BoxSizing::BorderBox);
-            const float pb_h = g.padding_left + g.padding_right
-                + g.border_left + g.border_right;
+            dir = storage.flex_directions[node->style_soa_idx];
+            wrap = storage.flex_wraps[node->style_soa_idx];
+        }
+        const bool is_row = (dir == style::FlexDir::Row || dir == style::FlexDir::RowReverse);
+        const bool is_reverse = (dir == style::FlexDir::RowReverse || dir == style::FlexDir::ColumnReverse);
 
+        // 2. Размеры контейнера
+        float content_width = std::max(0.0f, parent_width - (g.margin_left + g.margin_right + pb_h));
+        bool container_width_auto = true;
+        if (node->style_soa_idx != UINT32_MAX) {
             const style::Length& w = storage.widths[node_si];
             if (!w.is_auto() && !w.is_none()) {
                 float spec = resolve_px(w, fs, root_fs, vp, parent_width);
-                if (border_box) spec -= pb_h;
-                content_width = std::max(0.0f, spec);
+                content_width = border_box ? std::max(0.0f, spec - pb_h) : std::max(0.0f, spec);
                 container_width_auto = false;
             }
-
             const style::Length& maxw = storage.max_widths[node_si];
             if (!maxw.is_none()) {
                 float mw = resolve_px(maxw, fs, root_fs, vp, parent_width);
                 if (border_box) mw -= pb_h;
                 if (mw > 0.0f) content_width = std::min(content_width, mw);
             }
-
-            const style::Length& minw = storage.min_widths[node_si];
-            if (!minw.is_none()) {
-                float mw = resolve_px(minw, fs, root_fs, vp, parent_width);
-                if (border_box) mw -= pb_h;
-                if (mw > 0.0f) content_width = std::max(content_width, mw);
-            }
         }
 
-        const float inner_x = g.border_left + g.padding_left;
-        const float inner_y = g.border_top + g.padding_top;
+        if (override_content_width >= 0.0f) {
+            content_width = override_content_width;
+            container_width_auto = false;
+        }
 
-        // -------- Pass 1: собрать items и базовые размеры --------
+        // Отступы (gap)
+        float row_gap = 0.0f, col_gap = 0.0f;
+        if (node->style_soa_idx != UINT32_MAX) {
+            row_gap = resolve_px(storage.row_gaps[node_si], fs, root_fs, vp, parent_width);
+            col_gap = resolve_px(storage.column_gaps[node_si], fs, root_fs, vp, parent_width);
+        }
+
+        // 3. Сбор элементов
         struct FlexItem {
-            LayoutNode* node = nullptr;
+            LayoutNode* node;
             float base_main = 0.0f;
             float outer_main = 0.0f;
             float cross_outer = 0.0f;
             float grow = 0.0f;
             float shrink = 1.0f;
+            style::AlignSelf align_self = style::AlignSelf::Auto;
+            bool is_absolute = false;
         };
-
         std::vector<FlexItem> items;
-        items.reserve(node->children.size());
 
         for (auto& child : node->children) {
-            if (child->style_soa_idx != UINT32_MAX
-                && storage.positions[child->style_soa_idx] == style::Position::Absolute) {
-                child->geometry.flow_x = inner_x;
-                child->geometry.flow_y = inner_y;
-                continue;
-            }
-
-            resolve_box_model(child.get(), storage, vp, content_width, root_fs);
-
-            const float base = resolve_flex_basis(
-                child.get(), storage, content_width, root_fs, tm);
-
-            const float pb_h = child->geometry.padding_left
-                + child->geometry.padding_right
-                + child->geometry.border_left
-                + child->geometry.border_right;
-
-            float outer_main = base;
-            float grow = 0.0f;
-            float shrink = 1.0f;
-            if (child->style_soa_idx != UINT32_MAX) {
-                const bool border_box =
-                    storage.box_sizings[child->style_soa_idx] == BoxSizing::BorderBox;
-                if (!border_box) outer_main = base + pb_h;
-                grow = storage.flex_grows[child->style_soa_idx];
-                shrink = storage.flex_shrinks[child->style_soa_idx];
-            }
-
             FlexItem item;
             item.node = child.get();
+            item.is_absolute = (child->style_soa_idx != UINT32_MAX && storage.positions[child->style_soa_idx] == style::Position::Absolute);
+            if (item.is_absolute) { items.push_back(item); continue; }
+
+            resolve_box_model(child.get(), storage, vp, content_width, root_fs);
+            // Передаем is_row
+            float base = resolve_flex_basis(child.get(), storage, content_width, root_fs, tm, is_row);
+
             item.base_main = base;
-            item.outer_main = outer_main;
-            item.cross_outer = 0.0f;
-            item.grow = grow;
-            item.shrink = shrink;
+            if (child->style_soa_idx != UINT32_MAX) {
+                item.grow = storage.flex_grows[child->style_soa_idx];
+                item.shrink = storage.flex_shrinks[child->style_soa_idx];
+                item.align_self = storage.align_selves[child->style_soa_idx];
+            }
             items.push_back(item);
         }
+        // Сортировка по order
+        std::stable_sort(items.begin(), items.end(), [&](const FlexItem& a, const FlexItem& b) {
+            int oa = (a.node->style_soa_idx != UINT32_MAX) ? storage.flex_orders[a.node->style_soa_idx] : 0;
+            int ob = (b.node->style_soa_idx != UINT32_MAX) ? storage.flex_orders[b.node->style_soa_idx] : 0;
+            return oa < ob;
+            });
 
-        // -------- Pass 2: free space и распределение --------
-        float total_outer = 0.0f;
-        float total_grow = 0.0f;
-        float total_shrink_weight = 0.0f;
-        for (const auto& it : items) {
-            total_outer += it.outer_main
-                + it.node->geometry.margin_left
-                + it.node->geometry.margin_right;
-            total_grow += it.grow;
-            total_shrink_weight += it.shrink * it.base_main;
-        }
+        // 4. Разбиение на линии (flex-wrap)
+        struct FlexLine {
+            std::vector<FlexItem*> items;
+            float cross_size = 0.0f;
+            float main_size = 0.0f;
+        };
+        std::vector<FlexLine> lines;
 
-        // FIX: при auto-ширине контейнера "бюджет" = сумма базовых размеров
-        // (shrink-to-fit). Тогда free_space = 0, grow-распределение не
-        // срабатывает, а justify-content тоже не сдвигает (нет свободного
-        // места). Иначе бюджет — явная content_width.
-        const float budget = container_width_auto ? total_outer : content_width;
-        const float free_space = budget - total_outer;
+        float max_main_capacity = is_row ? content_width : (override_content_height >= 0.0f ? override_content_height : 1e9f);
 
-        if (free_space > 0.0f && total_grow > 0.0f) {
-            for (auto& it : items) {
-                if (it.grow <= 0.0f) continue;
-                it.outer_main += free_space * (it.grow / total_grow);
-            }
-        }
-        else if (free_space < 0.0f && total_shrink_weight > 0.0f) {
-            const float deficit = -free_space;
-            for (auto& it : items) {
-                if (it.shrink <= 0.0f) continue;
-                const float weight = it.shrink * it.base_main;
-                const float share = deficit * (weight / total_shrink_weight);
-                it.outer_main = std::max(0.0f, it.outer_main - share);
-            }
-        }
-
-        // -------- Pass 3: layout каждого item на (0,0) — только чтобы
-        // узнать итоговые размеры. Позиции расставим на Pass 5.
+        FlexLine current_line;
         for (auto& it : items) {
-            const float pb_h = it.node->geometry.padding_left
-                + it.node->geometry.padding_right
-                + it.node->geometry.border_left
-                + it.node->geometry.border_right;
-            const float override_content_w = std::max(0.0f, it.outer_main - pb_h);
+            if (it.is_absolute) continue;
 
-            // Flex item — blockified, устанавливает свой BFC.
-            FloatContext item_fc;
-            layout_node(it.node, 0.0f, 0.0f, content_width, vp, storage,
-                root_fs, tm, &item_fc, override_content_w);
+            float item_outer_main = it.base_main;
+            if (it.node->style_soa_idx != UINT32_MAX && storage.box_sizings[it.node->style_soa_idx] != BoxSizing::BorderBox) {
+                item_outer_main += is_row ? (it.node->geometry.padding_left + it.node->geometry.padding_right + it.node->geometry.border_left + it.node->geometry.border_right)
+                    : (it.node->geometry.padding_top + it.node->geometry.padding_bottom + it.node->geometry.border_top + it.node->geometry.border_bottom);
+            }
 
-            it.cross_outer = it.node->geometry.height
-                + it.node->geometry.margin_top
-                + it.node->geometry.margin_bottom;
+            float gap_to_add = current_line.items.empty() ? 0.0f : (is_row ? col_gap : row_gap);
+
+            if (wrap != style::FlexWrap::Nowrap && !current_line.items.empty() &&
+                current_line.main_size + gap_to_add + item_outer_main > max_main_capacity) {
+                lines.push_back(std::move(current_line));
+                current_line = FlexLine();
+                gap_to_add = 0.0f;
+            }
+
+            current_line.items.push_back(&it);
+            current_line.main_size += gap_to_add + item_outer_main;
         }
+        if (!current_line.items.empty()) lines.push_back(std::move(current_line));
 
-        float max_cross_outer = 0.0f;
-        for (const auto& it : items) {
-            max_cross_outer = std::max(max_cross_outer, it.cross_outer);
-        }
+        // 5. Раскладка каждой линии (grow/shrink)
+        for (auto& line : lines) {
+            float total_grow = 0.0f, total_shrink_weight = 0.0f;
+            float total_outer = 0.0f;
+            for (auto* it : line.items) {
+                total_grow += it->grow;
+                total_outer += it->base_main;
+                total_shrink_weight += it->shrink * it->base_main;
+            }
 
-        // FIX: считаем реальный использованный main-размер и (при auto)
-        // подрезаем content_width контейнера до него.
-        float used_main = 0.0f;
-        for (const auto& it : items) {
-            used_main += it.node->geometry.width
-                + it.node->geometry.margin_left
-                + it.node->geometry.margin_right;
-        }
+            float gaps = (line.items.size() > 1) ? (line.items.size() - 1) * (is_row ? col_gap : row_gap) : 0.0f;
+            float free_space = max_main_capacity - total_outer - gaps;
 
-        if (container_width_auto) {
-            content_width = used_main;
-
-            // Переприменяем min/max к финальному значению.
-            if (node->style_soa_idx != UINT32_MAX) {
-                const float fs = storage.font_sizes[node_si];
-                const bool border_box = (storage.box_sizings[node_si] == BoxSizing::BorderBox);
-                const float pb_h = g.padding_left + g.padding_right
-                    + g.border_left + g.border_right;
-
-                const style::Length& maxw = storage.max_widths[node_si];
-                if (!maxw.is_none()) {
-                    float mw = resolve_px(maxw, fs, root_fs, vp, parent_width);
-                    if (border_box) mw -= pb_h;
-                    if (mw > 0.0f) content_width = std::min(content_width, mw);
+            for (auto* it : line.items) {
+                it->outer_main = it->base_main;
+                if (free_space > 0 && total_grow > 0 && it->grow > 0) {
+                    it->outer_main += free_space * (it->grow / total_grow);
                 }
-
-                const style::Length& minw = storage.min_widths[node_si];
-                if (!minw.is_none()) {
-                    float mw = resolve_px(minw, fs, root_fs, vp, parent_width);
-                    if (border_box) mw -= pb_h;
-                    if (mw > 0.0f) content_width = std::max(content_width, mw);
+                else if (free_space < 0 && total_shrink_weight > 0 && it->shrink > 0) {
+                    float share = -free_space * (it->shrink * it->base_main / total_shrink_weight);
+                    it->outer_main = std::max(0.0f, it->outer_main - share);
                 }
             }
         }
 
-        // -------- Pass 4: justify-content (главная ось) --------
-        const float remaining = content_width - used_main;
-        float main_offset = 0.0f;
-        float item_gap = 0.0f;
+        // 6. Внутренний layout элементов (Stretch)
+        for (auto& line : lines) {
+            line.cross_size = 0.0f;
+            for (auto* it : line.items) {
+                float pb_main = is_row ? (it->node->geometry.padding_left + it->node->geometry.padding_right + it->node->geometry.border_left + it->node->geometry.border_right)
+                    : (it->node->geometry.padding_top + it->node->geometry.padding_bottom + it->node->geometry.border_top + it->node->geometry.border_bottom);
 
+                float override_w = is_row ? std::max(0.0f, it->outer_main - pb_main) : content_width;
+                float override_h = !is_row ? std::max(0.0f, it->outer_main - pb_main) : -1.0f;
+
+                FloatContext item_fc;
+                layout_node(it->node, 0, 0, is_row ? content_width : override_w, vp, storage, root_fs, tm, &item_fc, override_w, override_h);
+
+                // ИСПРАВЛЕНИЕ: крест-размер включает margin
+                if (is_row) {
+                    it->cross_outer = it->node->geometry.height + it->node->geometry.margin_top + it->node->geometry.margin_bottom;
+                }
+                else {
+                    it->cross_outer = it->node->geometry.width + it->node->geometry.margin_left + it->node->geometry.margin_right;
+                }
+                line.cross_size = std::max(line.cross_size, it->cross_outer);
+            }
+        }
+        // 7. Позиционирование элементов
         style::Justify justify = style::Justify::Start;
+        style::AlignContent align_content = style::AlignContent::Stretch;
+        style::AlignItems align_items = style::AlignItems::FlexStart;
         if (node->style_soa_idx != UINT32_MAX) {
             justify = storage.justify_contents[node->style_soa_idx];
+            align_content = storage.align_contents[node->style_soa_idx];
+            align_items = storage.align_items[node->style_soa_idx];
         }
 
-        if (remaining > 0.0f && !items.empty()) {
-            switch (justify) {
-            case style::Justify::End:
-                main_offset = remaining;
-                break;
-            case style::Justify::Center:
-                main_offset = remaining * 0.5f;
-                break;
-            case style::Justify::SpaceBetween:
-                if (items.size() > 1) item_gap = remaining / (items.size() - 1);
-                break;
-            case style::Justify::SpaceAround:
-                item_gap = remaining / items.size();
+        float total_cross = 0.0f;
+        for (const auto& l : lines) total_cross += l.cross_size;
+        total_cross += (lines.size() > 1) ? (lines.size() - 1) * (is_row ? row_gap : col_gap) : 0.0f;
+
+        float cross_offset = 0.0f;
+        float line_gap = 0.0f;
+        if (lines.size() > 1 && is_row) {
+            float free_cross = g.height - pb_v - total_cross;
+            if (free_cross > 0) {
+                if (align_content == style::AlignContent::Center) cross_offset = free_cross * 0.5f;
+                else if (align_content == style::AlignContent::FlexEnd) cross_offset = free_cross;
+                else if (align_content == style::AlignContent::SpaceBetween) line_gap = free_cross / (lines.size() - 1);
+            }
+        }
+
+        const float origin_x = g.x + g.border_left + g.padding_left;
+        const float origin_y = g.y + g.border_top + g.padding_top;
+
+        for (auto& line : lines) {
+            float line_main_free = max_main_capacity - line.main_size;
+            if (line_main_free < 0) line_main_free = 0;
+
+            float main_offset = 0.0f, item_gap = 0.0f;
+            if (justify == style::Justify::Center) main_offset = line_main_free * 0.5f;
+            else if (justify == style::Justify::End) main_offset = line_main_free;
+            else if (justify == style::Justify::SpaceBetween && line.items.size() > 1) item_gap = line_main_free / (line.items.size() - 1);
+            else if (justify == style::Justify::SpaceAround) {
+                item_gap = line_main_free / line.items.size();
                 main_offset = item_gap * 0.5f;
-                break;
-            case style::Justify::SpaceEvenly:
-                item_gap = remaining / (items.size() + 1);
-                main_offset = item_gap;
-                break;
-            case style::Justify::Start:
-            default:
-                break;
             }
+
+            float cur_main = main_offset;
+
+            for (auto* it : line.items) {
+                float item_cross_offset = 0.0f;
+                style::AlignItems a = (it->align_self == style::AlignSelf::Auto) ? align_items :
+                    (it->align_self == style::AlignSelf::Center ? style::AlignItems::Center :
+                        (it->align_self == style::AlignSelf::FlexEnd ? style::AlignItems::FlexEnd : style::AlignItems::FlexStart));
+
+                if (a == style::AlignItems::Center) item_cross_offset = (line.cross_size - it->cross_outer) * 0.5f;
+                else if (a == style::AlignItems::FlexEnd) item_cross_offset = line.cross_size - it->cross_outer;
+
+                // ИСПРАВЛЕНИЕ: учитываем margin_left и margin_top
+                float target_x = origin_x + (is_row ? (cur_main + it->node->geometry.margin_left) : (cross_offset + item_cross_offset + it->node->geometry.margin_left));
+                float target_y = origin_y + (is_row ? (cross_offset + item_cross_offset + it->node->geometry.margin_top) : (cur_main + it->node->geometry.margin_top));
+
+                shift_subtree(it->node, target_x - it->node->geometry.x, target_y - it->node->geometry.y);
+
+                // ИСПРАВЛЕНИЕ: сдвигаем курсор с учетом margin_right и margin_bottom
+                if (is_row) {
+                    cur_main += it->outer_main + it->node->geometry.margin_left + it->node->geometry.margin_right + col_gap + item_gap;
+                }
+                else {
+                    cur_main += it->outer_main + it->node->geometry.margin_top + it->node->geometry.margin_bottom + row_gap + item_gap;
+                }
+            }
+            cross_offset += line.cross_size + line_gap + (is_row ? row_gap : col_gap);
         }
 
-        // -------- Pass 5: align-items (поперечная ось) + позиции --------
-        style::AlignItems align = style::AlignItems::FlexStart;
+        // 8. Итоговый размер контейнера
+        if (container_width_auto && is_row) {
+            content_width = 0;
+            for (auto& l : lines) content_width = std::max(content_width, l.main_size);
+        }
+
+        float content_height = total_cross;
         if (node->style_soa_idx != UINT32_MAX) {
-            align = storage.align_items[node->style_soa_idx];
-        }
-
-        const float flex_origin_x = g.x + inner_x;
-        const float flex_origin_y = g.y + inner_y;
-
-        float x_cursor = main_offset;
-        for (auto& it : items) {
-            LayoutNode* child = it.node;
-
-            float cross_offset = 0.0f;
-            if (align == style::AlignItems::Center) {
-                cross_offset = (max_cross_outer - it.cross_outer) * 0.5f;
-            }
-            else if (align == style::AlignItems::FlexEnd) {
-                cross_offset = max_cross_outer - it.cross_outer;
-            }
-
-            // Ребёнок сейчас в (0,0). Сдвигаем весь поддерево в целевую
-            // абсолютную позицию.
-            const float target_x = flex_origin_x + x_cursor + child->geometry.margin_left;
-            const float target_y = flex_origin_y + cross_offset + child->geometry.margin_top;
-            shift_subtree(child, target_x - child->geometry.x,
-                target_y - child->geometry.y);
-
-            x_cursor += child->geometry.margin_left
-                + child->geometry.width
-                + child->geometry.margin_right
-                + item_gap;
-        }
-
-        // -------- content_height контейнера --------
-        float content_height = max_cross_outer;
-
-        if (node->style_soa_idx != UINT32_MAX) {
-            const float fs = storage.font_sizes[node_si];
-            const bool border_box = (storage.box_sizings[node_si] == BoxSizing::BorderBox);
-            const float pb_v = g.padding_top + g.padding_bottom
-                + g.border_top + g.border_bottom;
-
             const style::Length& h = storage.heights[node_si];
             if (!h.is_auto() && !h.is_none()) {
                 float spec = resolve_px(h, fs, root_fs, vp, parent_width);
-                if (border_box) spec -= pb_v;
-                content_height = std::max(0.0f, spec);
-            }
-
-            const style::Length& maxh = storage.max_heights[node_si];
-            if (!maxh.is_none()) {
-                float mh = resolve_px(maxh, fs, root_fs, vp, parent_width);
-                if (border_box) mh -= pb_v;
-                if (mh > 0.0f) content_height = std::min(content_height, mh);
-            }
-
-            const style::Length& minh = storage.min_heights[node_si];
-            if (!minh.is_none()) {
-                float mh = resolve_px(minh, fs, root_fs, vp, parent_width);
-                if (border_box) mh -= pb_v;
-                if (mh > 0.0f) content_height = std::max(content_height, mh);
+                content_height = border_box ? std::max(0.0f, spec - pb_v) : std::max(0.0f, spec);
             }
         }
 
-        g.width = g.border_left + g.padding_left + content_width
-            + g.padding_right + g.border_right;
-        g.height = g.border_top + g.padding_top + content_height
-            + g.padding_bottom + g.border_bottom;
-    }
+        // Применяем override извне (если это flex-элемент внутри другого flex)
+        if (override_content_width >= 0.0f) content_width = override_content_width;
+        if (override_content_height >= 0.0f) content_height = override_content_height;
 
+        g.width = g.border_left + g.padding_left + content_width + g.padding_right + g.border_right;
+        g.height = g.border_top + g.padding_top + content_height + g.padding_bottom + g.border_bottom;
+    }
     // Замер минимальной (самое длинное слово) и максимальной (вся строка) ширины
     static std::pair<float, float> measure_cell_min_max(const LayoutNode* node,
         const StyleStorageSoA& storage, float root_fs, const TextMetrics& tm)
@@ -1062,8 +1027,10 @@ private:
                 const auto& w = storage.widths[p.cell->style_soa_idx];
                 if (!w.is_auto() && !w.is_none()) {
                     float spec = resolve_px(w, storage.font_sizes[p.cell->style_soa_idx], root_fs, vp, content_width);
-                    c_min = std::max(c_min, spec);
-                    c_max = std::max(c_max, spec);
+
+                    // ИСПРАВЛЕНИЕ: убираем std::max
+                    if (spec > c_min) c_min = spec;
+                    if (spec > c_max) c_max = spec;
                 }
             }
             // Распределяем требования к ширине по колонкам (включая colspan)
@@ -1134,7 +1101,7 @@ private:
                     p.cell->geometry.x = cell_x;
                     p.cell->geometry.y = y_cursor;
 
-                    layout_block_container(p.cell, cell_w, vp, storage, root_fs, tm, nullptr, cell_w, cell_padding);
+                    layout_block_container(p.cell, cell_w, vp, storage, root_fs, tm, nullptr, cell_w, -1.0f, cell_padding);
                     row_height = std::max(row_height, p.cell->geometry.height);
                 }
             }
@@ -1186,15 +1153,10 @@ private:
         // abs_x, abs_y — АБСОЛЮТНАЯ позиция border-box узла.
     // layout_node присваивает её в node->geometry.x/y в самом начале,
     // чтобы все вложенные FC могли пользоваться абсолютными координатами.
-    static void layout_node(LayoutNode* node,
-        float abs_x, float abs_y,
-        float parent_width,
-        const Viewport& vp,
-        const StyleStorageSoA& storage,
-        float root_fs,
-        const TextMetrics& tm,
-        FloatContext* parent_fc,
-        float override_content_width = -1.0f)
+
+    static void layout_node(LayoutNode* node, float abs_x, float abs_y, float parent_width,
+        const Viewport& vp, const StyleStorageSoA& storage, float root_fs, const TextMetrics& tm,
+        FloatContext* parent_fc, float override_content_width = -1.0f, float override_content_height = -1.0f)
     {
         node->geometry.x = abs_x;
         node->geometry.y = abs_y;
@@ -1207,7 +1169,8 @@ private:
         // -------------------------------------
 
         if (is_flex_container(node, storage)) {
-            layout_flex_container(node, parent_width, vp, storage, root_fs, tm);
+            // ДОБАВЬ ПЕРЕДАЧУ OVERRIDE ПАРАМЕТРОВ:
+            layout_flex_container(node, parent_width, vp, storage, root_fs, tm, override_content_width, override_content_height);
             return;
         }
 
@@ -1219,8 +1182,8 @@ private:
         case BoxType::Block:
         case BoxType::TableCell: // <--- Добавили
         case BoxType::TableRow:  // <--- Добавили
-            layout_block_container(node, parent_width, vp, storage, root_fs,
-                tm, parent_fc, override_content_width);
+            layout_block_container(node, parent_width, vp, storage, root_fs, tm,
+                parent_fc, override_content_width, override_content_height);
             break;
         case BoxType::Inline:
             layout_inline(node, parent_width, vp, storage, root_fs, tm, parent_fc);
@@ -1923,14 +1886,9 @@ private:
     //  `width` узла. Это нужно, чтобы flex-распределение не затиралось
     //  явной шириной ребёнка.
     // =================================================================
-    static void layout_block_container(LayoutNode* node, float parent_width,
-        const Viewport& vp,
-        const StyleStorageSoA& storage,
-        float root_fs,
-        const TextMetrics& tm,
-        FloatContext* parent_fc,
-        float override_content_width = -1.0f,
-        float extra_padding = 0.0f) // <--- ДОБАВЬ ЭТО
+    static void layout_block_container(LayoutNode* node, float parent_width, const Viewport& vp,
+        const StyleStorageSoA& storage, float root_fs, const TextMetrics& tm, FloatContext* parent_fc,
+        float override_content_width = -1.0f, float override_content_height = -1.0f, float extra_padding = 0.0f)
     {
         auto& g = node->geometry;
         const bool is_real = (node->type == BoxType::Block || node->type == BoxType::TableCell);
@@ -2174,6 +2132,10 @@ private:
                 const float rel = fb - (g.y + inner_y);
                 content_height = std::max(content_height, rel);
             }
+        }
+
+        if (override_content_height >= 0.0f) {
+            content_height = override_content_height;
         }
 
         g.width = g.border_left + g.padding_left + content_width

@@ -59,6 +59,7 @@ table { display: table; }
 thead, tbody, tfoot { display: block; }
 tr { display: table-row; }
 td, th { display: table-cell; padding: 1px; }
+html, body { background-color: white; color: black; }
 )CSS";
 
 } // namespace ua_css

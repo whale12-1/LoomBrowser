@@ -3088,3 +3088,59 @@ TEST_CASE("LTB clip: nested overflow hidden intersects clips",
     REQUIRE(child->clip_w == Approx(50.0f));
     REQUIRE(child->clip_h == Approx(50.0f));
 }
+
+
+
+TEST_CASE("LTB flex column: items stack vertically", "[ltb][layout][flex][column]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena, "<div id='f'><p id='a'></p><p id='b'></p></div>",
+        "#f { display: flex; flex-direction: column; width: 100px; } "
+        "#a { display: block; width: 50px; height: 20px; } "
+        "#b { display: block; width: 60px; height: 30px; }");
+    auto* a = find_by_soa_idx(p.root.get(), 3);
+    auto* b = find_by_soa_idx(p.root.get(), 4);
+    REQUIRE(a->geometry.y == Approx(0.0f).epsilon(0.001));
+    REQUIRE(b->geometry.y == Approx(20.0f).epsilon(0.001)); // Ниже a
+    REQUIRE(a->geometry.x == Approx(0.0f).epsilon(0.001));  // По левому краю
+}
+
+TEST_CASE("LTB flex wrap: items wrap to next line when exceeding width", "[ltb][layout][flex][wrap]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena, "<div id='f'><p id='a'></p><p id='b'></p><p id='c'></p></div>",
+        "#f { display: flex; flex-wrap: wrap; width: 100px; } "
+        "#a { display: block; width: 60px; height: 20px; } "
+        "#b { display: block; width: 60px; height: 20px; } " // Не влезает рядом с a
+        "#c { display: block; width: 60px; height: 20px; }");
+    auto* a = find_by_soa_idx(p.root.get(), 3);
+    auto* b = find_by_soa_idx(p.root.get(), 4);
+    auto* c = find_by_soa_idx(p.root.get(), 5);
+
+    REQUIRE(a->geometry.y == Approx(0.0f).epsilon(0.001));
+    REQUIRE(b->geometry.y == Approx(20.0f).epsilon(0.001)); // Ушел на 2-ю строку
+    REQUIRE(c->geometry.y == Approx(40.0f).epsilon(0.001));
+}
+
+TEST_CASE("LTB flex gap: applies row and column gaps", "[ltb][layout][flex][gap]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena, "<div id='f'><p id='a'></p><p id='b'></p></div>",
+        "#f { display: flex; gap: 10px 20px; width: 200px; } " // 10px row, 20px col
+        "#a { display: block; width: 50px; height: 20px; } "
+        "#b { display: block; width: 50px; height: 20px; }");
+    auto* a = find_by_soa_idx(p.root.get(), 3);
+    auto* b = find_by_soa_idx(p.root.get(), 4);
+    REQUIRE(a->geometry.x == Approx(0.0f).epsilon(0.001));
+    REQUIRE(b->geometry.x == Approx(70.0f).epsilon(0.001)); // 50 + 20
+}
+
+TEST_CASE("LTB flex order: reorders children", "[ltb][layout][flex][order]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena, "<div id='f'><p id='a'></p><p id='b'></p></div>",
+        "#f { display: flex; } "
+        "#a { display: block; width: 50px; height: 20px; order: 2; } "
+        "#b { display: block; width: 50px; height: 20px; order: 1; }");
+    auto* a = find_by_soa_idx(p.root.get(), 3);
+    auto* b = find_by_soa_idx(p.root.get(), 4);
+    // b должен быть первым (x=0), a вторым (x=50)
+    REQUIRE(b->geometry.x == Approx(0.0f).epsilon(0.001));
+    REQUIRE(a->geometry.x == Approx(50.0f).epsilon(0.001));
+}

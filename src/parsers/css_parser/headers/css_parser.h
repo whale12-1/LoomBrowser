@@ -508,6 +508,11 @@ private:
                         match(';');
                         continue;
                     }
+                    if (d.property == "gap") {
+                        expand_gap(d, decls);
+                        match(';');
+                        continue;
+                    }
                     // ---------------------------------
                     // Shorthand → 4 longhand-декларации с тем же order и important.
                     auto sit = shorthand_table().find(d.property);
@@ -696,6 +701,27 @@ private:
             }
         }
         return tokens;
+    }
+
+    static void expand_gap(const Declaration& d, std::vector<Declaration>& decls) {
+        auto tokens = split_value_tokens(d.value);
+
+        auto add = [&](const std::string& prop, const std::string& val) {
+            Declaration dd;
+            dd.property = prop;
+            dd.value = val;
+            dd.important = d.important;
+            decls.push_back(dd);
+            };
+
+        if (tokens.size() == 1) {
+            add("row-gap", tokens[0]);
+            add("column-gap", tokens[0]);
+        }
+        else if (tokens.size() >= 2) {
+            add("row-gap", tokens[0]);
+            add("column-gap", tokens[1]);
+        }
     }
 
     static void expand_background(const Declaration& d, std::vector<Declaration>& decls) {

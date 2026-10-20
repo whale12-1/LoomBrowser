@@ -414,6 +414,12 @@ private:
         case Prop::JustifyContent: storage.justify_contents[idx] = parse_justify(v); break;
         case Prop::AlignItems: storage.align_items[idx] = parse_align_items(v); break;
         case Prop::VerticalAlign: storage.vertical_aligns[idx] = parse_vertical_align(v); break;
+        case Prop::FlexWrap: storage.flex_wraps[idx] = parse_flex_wrap(v); break;
+        case Prop::AlignContent: storage.align_contents[idx] = parse_align_content(v); break;
+        case Prop::AlignSelf: storage.align_selves[idx] = parse_align_self(v); break;
+        case Prop::Order: storage.flex_orders[idx] = std::atoi(v.c_str()); break;
+        case Prop::RowGap: storage.row_gaps[idx] = parse_length(v); break;
+        case Prop::ColumnGap: storage.column_gaps[idx] = parse_length(v); break;
 
         case Prop::ZIndex: {
             char* end = nullptr;
@@ -981,5 +987,27 @@ private:
         while (b < e && std::isspace((unsigned char)v[b])) ++b;
         while (e > b && std::isspace((unsigned char)v[e - 1])) --e;
         return v.substr(b, e - b);
+    }
+
+    static style::FlexWrap parse_flex_wrap(const std::string& v) {
+        if (v == "wrap") return style::FlexWrap::Wrap;
+        if (v == "wrap-reverse") return style::FlexWrap::WrapReverse;
+        return style::FlexWrap::Nowrap;
+    }
+    static style::AlignContent parse_align_content(const std::string& v) {
+        if (v == "flex-start" || v == "start") return style::AlignContent::FlexStart;
+        if (v == "flex-end" || v == "end") return style::AlignContent::FlexEnd;
+        if (v == "center") return style::AlignContent::Center;
+        if (v == "space-between") return style::AlignContent::SpaceBetween;
+        if (v == "space-around") return style::AlignContent::SpaceAround;
+        return style::AlignContent::Stretch;
+    }
+    static style::AlignSelf parse_align_self(const std::string& v) {
+        if (v == "flex-start" || v == "start") return style::AlignSelf::FlexStart;
+        if (v == "flex-end" || v == "end") return style::AlignSelf::FlexEnd;
+        if (v == "center") return style::AlignSelf::Center;
+        if (v == "baseline") return style::AlignSelf::Baseline;
+        if (v == "stretch") return style::AlignSelf::Stretch;
+        return style::AlignSelf::Auto;
     }
 };

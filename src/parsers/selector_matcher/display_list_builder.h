@@ -193,7 +193,7 @@ private:
                 it.x = ax; it.y = ay; it.width = w; it.height = h;
                 it.image_path = bg_img;
                 it.image = get_img(bg_img); // <--- БЕРЕМ ИЗ КЭША
-                if (it.image && (it.image->width() > 1 || it.image->height() > 1)) {
+                if (it.image || !bg_img.empty()) {
                     it.opacity = item_opacity;
                     it.is_background = true;
                     fill_radius(it, node, storage, w, h);
@@ -320,8 +320,10 @@ private:
             it.image_path = node->image_src;
             it.image = get_img(node->image_src);
 
-            // --- НОВОЕ: Рисуем только если картинка больше 1x1 ---
-            if (it.image && (it.image->width() > 1 || it.image->height() > 1)) {
+            // ИСПРАВЛЕНИЕ: Пропускаем только если картинка загружена и это заглушка 1x1.
+            // Если картинки нет в кэше (!it.image), мы всё равно добавляем её в список, 
+            // чтобы рендерер загрузил её с диска/сети.
+            if (!it.image || (it.image->width() > 1 || it.image->height() > 1)) {
                 it.opacity = item_opacity;
                 it.is_background = false;
                 fill_radius(it, node, storage, w, h);

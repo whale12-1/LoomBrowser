@@ -73,6 +73,13 @@ namespace style_props {
             {"flex-grow",       P::FlexGrow},
             {"flex-shrink",     P::FlexShrink},
             {"flex-basis",      P::FlexBasis},
+            {"flex-wrap",       P::FlexWrap},
+            {"align-content",   P::AlignContent},
+            {"align-self",      P::AlignSelf},
+            {"order",           P::Order},
+            {"row-gap",         P::RowGap},
+            {"column-gap",      P::ColumnGap},
+            {"gap",             P::RowGap}, // Обработаем отдельно как шортхенд
         };
         auto it = table.find(name);
         if (it == table.end()) return false;
@@ -159,7 +166,18 @@ namespace style_props {
         if (prop_name == "padding")      return apply_1to4("padding-", "", split(value));
         if (prop_name == "border-width") return apply_1to4("border-", "-width", split(value));
         if (prop_name == "border-color") return apply_1to4("border-", "-color", split(value));
-
+        if (prop_name == "gap") {
+            auto tokens = split(value);
+            if (tokens.size() == 1) {
+                out.push_back({ "row-gap", tokens[0] });
+                out.push_back({ "column-gap", tokens[0] });
+            }
+            else if (tokens.size() == 2) {
+                out.push_back({ "row-gap", tokens[0] });
+                out.push_back({ "column-gap", tokens[1] });
+            }
+            return true;
+        }
         if (prop_name == "border") {
             auto tokens = split(value);
             std::string width = "medium";

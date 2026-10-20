@@ -77,6 +77,11 @@ struct StyleStorageSoA {
     std::vector<BackgroundRepeat>   background_repeats;
     std::vector<Length>     flex_bases;
     std::vector<float>      flex_grows, flex_shrinks;
+    std::vector<style::FlexWrap> flex_wraps;
+    std::vector<style::AlignContent> align_contents;
+    std::vector<style::AlignSelf> align_selves;
+    std::vector<int32_t> flex_orders;
+    std::vector<Length> row_gaps, column_gaps;
 
     // ����� � �������� � px (����� ��� resolve em � �����)
     std::vector<float>      font_sizes;
@@ -167,6 +172,13 @@ struct StyleStorageSoA {
         flex_bases.push_back({ -1.0f, Unit::Auto });
         flex_grows.push_back(0.0f);
         flex_shrinks.push_back(1.0f);
+
+        flex_wraps.push_back(style::FlexWrap::Nowrap);
+        align_contents.push_back(style::AlignContent::Stretch);
+        align_selves.push_back(style::AlignSelf::Auto);
+        flex_orders.push_back(0);
+        row_gaps.push_back({ 0.0f, Unit::Px });
+        column_gaps.push_back({ 0.0f, Unit::Px });
 
         font_sizes.push_back(16.0f);
         font_families.push_back(""); // пустая строка = дефолтный шрифт системы

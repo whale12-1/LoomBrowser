@@ -43,6 +43,10 @@ namespace style {
         TextBottom,
     };
 
+    enum class FlexWrap : uint8_t { Nowrap, Wrap, WrapReverse };
+    enum class AlignContent : uint8_t { Stretch, FlexStart, FlexEnd, Center, SpaceBetween, SpaceAround };
+    enum class AlignSelf : uint8_t { Auto, Stretch, FlexStart, FlexEnd, Center, Baseline };
+
     // ---- ������������� CSS-��������. ������������ � ������� ������� ----
     enum class Prop : uint16_t {
         Display, Position, Float, Clear , Overflow, Visibility, BoxSizing, ZIndex, Opacity,
@@ -56,6 +60,7 @@ namespace style {
         BorderTopWidth, BorderRightWidth, BorderBottomWidth, BorderLeftWidth,
         BorderTopColor, BorderRightColor, BorderBottomColor, BorderLeftColor,
         VerticalAlign,
+        FlexWrap, AlignContent, AlignSelf, Order, RowGap, ColumnGap,
         FlexDirection, JustifyContent, AlignItems, FlexGrow, FlexShrink, FlexBasis,
         BorderRadius, BorderTopLeftRadius, BorderTopRightRadius,
         BorderBottomRightRadius, BorderBottomLeftRadius,
