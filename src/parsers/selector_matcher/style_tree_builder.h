@@ -294,6 +294,10 @@ private:
         if (parent_idx != INVALID_INDEX)
             inherit_from_parent(idx, parent_idx, storage);
 
+
+        std::unordered_map<std::string, std::string> current_vars;
+        if (parent_idx != INVALID_INDEX) current_vars = storage.custom_props[parent_idx];
+
         scratch.clear();
         index.collect(node, scratch);
 
@@ -308,6 +312,12 @@ private:
             const CSSRule& rule = index.rule(entry);
             for (uint32_t di = 0; di < rule.declarations.size(); ++di) {
                 const Declaration& d = rule.declarations[di];
+
+
+                if (d.is_custom_property) {
+                    current_vars[d.property] = d.value; // Сохраняем переменную
+                    continue;
+                }
 
                 Prop p;
                 if (!style_props::lookup_css_prop(d.property, p)) continue;
@@ -362,6 +372,13 @@ private:
             if (inline_sheet && !inline_sheet->rules.empty()) {
                 const auto& declarations = inline_sheet->rules.front().declarations;
                 for (const Declaration& d : declarations) {
+
+                    if (d.is_custom_property) {
+                        current_vars[d.property] = d.value;
+                        continue;
+                    }
+
+
                     Prop p;
                     if (!style_props::lookup_css_prop(d.property, p)) continue;
 
@@ -380,11 +397,14 @@ private:
                 }
             }
         }
+        storage.custom_props[idx] = current_vars;
 
         for (size_t pi = 0; pi < style::PROP_COUNT; ++pi) {
             if (winners[pi].empty()) continue;
-            apply_declaration(static_cast<Prop>(pi), winners[pi].declaration,
-                idx, parent_idx, storage);
+            Declaration d = winners[pi].declaration;
+            // Подставляем переменные
+            d.value = resolve_vars(d.value, current_vars);
+            apply_declaration(static_cast<Prop>(pi), d, idx, parent_idx, storage);
             storage.mark_explicit(idx, static_cast<Prop>(pi));
         }
 
@@ -688,6 +708,27 @@ private:
         if (b == e) return { 0.0f, Unit::Px };
 
         std::string s = v.substr(b, e - b);
+
+        if (s.rfind("calc(", 0) == 0) {
+            std::string inner = s.substr(5, s.size() - 6);
+            size_t op_pos = inner.find_first_of("+-*/", 1); // ищем оператор
+            if (op_pos != std::string::npos) {
+                std::string left = inner.substr(0, op_pos);
+                std::string right = inner.substr(op_pos + 1);
+                char op = inner[op_pos];
+
+                auto trim = [](std::string str) {
+                    size_t b = str.find_first_not_of(" \t");
+                    if (b == std::string::npos) return std::string("0");
+                    size_t e = str.find_last_not_of(" \t");
+                    return str.substr(b, e - b + 1);
+                    };
+                Length a = parse_length(trim(left));
+                Length b_len = parse_length(trim(right));
+                return { 0.0f, Unit::Calc, a.value, a.unit, b_len.value, b_len.unit, op };
+            }
+        }
+
         if (s == "auto") return { -1.0f, Unit::Auto };
         if (s == "none") return { 0.0f, Unit::None };
         if (s == "0")    return { 0.0f, Unit::Px };
@@ -884,6 +925,41 @@ private:
         if (v == "repeat-x")  return BackgroundRepeat::RepeatX;
         if (v == "repeat-y")  return BackgroundRepeat::RepeatY;
         return BackgroundRepeat::Repeat;
+    }
+
+    static std::string resolve_vars(std::string val, const std::unordered_map<std::string, std::string>& vars) {
+        size_t pos = 0;
+        while ((pos = val.find("var(")) != std::string::npos) {
+            size_t end = val.find(')', pos);
+            if (end == std::string::npos) break;
+            std::string var_expr = val.substr(pos + 4, end - pos - 4);
+
+            // Поддержка fallback: var(--x, red)
+            size_t comma = var_expr.find(',');
+            std::string var_name = (comma != std::string::npos) ? var_expr.substr(0, comma) : var_expr;
+            std::string fallback = (comma != std::string::npos) ? var_expr.substr(comma + 1) : "";
+
+            auto trim = [](std::string s) {
+                size_t b = s.find_first_not_of(" \t\r\n");
+                if (b == std::string::npos) return std::string("");
+                size_t e = s.find_last_not_of(" \t\r\n");
+                return s.substr(b, e - b + 1);
+                };
+            var_name = trim(var_name);
+            fallback = trim(fallback);
+
+            auto it = vars.find(var_name);
+            if (it != vars.end()) {
+                val.replace(pos, end - pos + 1, it->second);
+            }
+            else if (!fallback.empty()) {
+                val.replace(pos, end - pos + 1, fallback);
+            }
+            else {
+                val.replace(pos, end - pos + 1, "");
+            }
+        }
+        return val;
     }
 
     static BackgroundSize parse_bg_size(const std::string& v) {

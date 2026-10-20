@@ -1218,6 +1218,17 @@ private:
         case Unit::Mm:      return l.value * 96.0f / 25.4f;
         case Unit::In:      return l.value * 96.0f;
         case Unit::Auto:
+        case Unit::Calc: {
+            Length la{ l.val_a, l.unit_a };
+            Length lb{ l.val_b, l.unit_b };
+            float a = resolve_px(la, font_size, root_fs, vp, percentage_base);
+            float b = resolve_px(lb, font_size, root_fs, vp, percentage_base);
+            if (l.op == '+') return a + b;
+            if (l.op == '-') return a - b;
+            if (l.op == '*') return a * b;
+            if (l.op == '/') return (b != 0.0f) ? a / b : 0.0f;
+            return 0.0f;
+        }
         case Unit::None:    return 0.0f;
         }
         return 0.0f;

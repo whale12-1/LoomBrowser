@@ -49,6 +49,7 @@ struct StyleStorageSoA {
     std::vector<Justify>    justify_contents;
     std::vector<AlignItems> align_items;
     std::vector<VerticalAlign> vertical_aligns;
+    std::vector<std::unordered_map<std::string, std::string>> custom_props;
 
     std::vector<uint16_t>   font_weights;         // 100..900
     std::vector<uint8_t>    opacity_q;            // opacity * 255
@@ -184,7 +185,7 @@ struct StyleStorageSoA {
         font_families.push_back(""); // пустая строка = дефолтный шрифт системы
         line_heights.push_back(0.0f);
         letter_spacings.push_back(0.0f);
-
+        custom_props.push_back({});
         explicit_mask.resize((i + 1) * PROP_MASK_WORDS, 0ull);
         return i;
     }

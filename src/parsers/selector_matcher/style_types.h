@@ -87,12 +87,18 @@ namespace style {
     // ---- �����. ����������� resolve ������������� ������ �� layout ----
     enum class Unit : uint8_t {
         Px, Em, Rem, Percent, Vw, Vh, Vmin, Vmax, Pt, Cm, Mm, In,
-        Auto, None
+        Auto, None, Calc 
     };
-
     struct Length {
         float value = 0.0f;
         Unit  unit = Unit::Px;
+
+        // --- Поля для calc() ---
+        float val_a = 0.0f;
+        Unit  unit_a = Unit::Px;
+        float val_b = 0.0f;
+        Unit  unit_b = Unit::Px;
+        char  op = 0; // '+', '-', '*', '/'
 
         bool is_auto() const { return unit == Unit::Auto; }
         bool is_none() const { return unit == Unit::None; }
