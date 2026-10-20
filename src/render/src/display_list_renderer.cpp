@@ -10,6 +10,7 @@
 #include <QImage>
 #include <algorithm>
 #include <QPainterPath>
+#include <QDebug>
 #include <QFontDatabase>
 
 namespace {
@@ -47,7 +48,12 @@ namespace {
     // Рисует background-image с учётом size/position/repeat.
     void draw_background(QPainter& p, const DisplayItem& it) {
         QImage img;
-        if (!img.load(QString::fromStdString(it.image_path))) return;
+        if (it.image) {
+            img = *it.image;
+        }
+        else {
+            if (!img.load(QString::fromStdString(it.image_path))) return;
+        }
 
         const float cw = it.width, ch = it.height;
         const float iw = float(img.width()), ih = float(img.height());
@@ -223,23 +229,32 @@ QImage DisplayListRenderer::render(const DisplayList& list,
             break;
         }
         case DisplayItemType::Image: {
-            if (item.image_path.empty()) break;
             if (item.is_background) {
                 draw_background(p, item);
             }
             else {
                 QImage src;
-                if (!src.load(QString::fromStdString(item.image_path))) break;
+                if (item.image) {
+                    src = *item.image; // <--- БЕРЕМ ИЗ ПАМЯТИ
+                }
+                else if (!item.image_path.empty()) {
+                    if (!src.load(QString::fromStdString(item.image_path))) break;
+                }
+                else {
+                    break;
+                }
+
                 if (item.has_radius()) {
                     p.save();
                     p.setClipPath(rounded_path(item));
-                    p.drawImage(QRectF(item.x, item.y,
-                        item.width, item.height), src);
+                    p.drawImage(QRectF(item.x, item.y, item.width, item.height), src);
                     p.restore();
                 }
                 else {
-                    p.drawImage(QRectF(item.x, item.y,
-                        item.width, item.height), src);
+                    qDebug() << "[Render] Drawing image:" << QString::fromStdString(item.image_path)
+                        << "has_image_ptr:" << (item.image != nullptr)
+                        << "size:" << item.width << "x" << item.height;
+                    p.drawImage(QRectF(item.x, item.y, item.width, item.height), src);
                 }
             }
             break;

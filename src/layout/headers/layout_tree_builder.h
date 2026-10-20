@@ -262,6 +262,21 @@ private:
         // больше не заходим в детей (их нет).
 
         const std::string_view tag(dom->tag_name.data(), dom->tag_name.size());
+
+        if (tag == "td" || tag == "th") {
+            for (const auto& kv : dom->attributes) {
+                std::string_view k(kv.first.data(), kv.first.size());
+                if (k == "colspan") {
+                    try { node->colspan = std::max(1, std::stoi(std::string(kv.second))); }
+                    catch (...) {}
+                }
+                if (k == "rowspan") {
+                    try { node->rowspan = std::max(1, std::stoi(std::string(kv.second))); }
+                    catch (...) {}
+                }
+            }
+        }
+
         if (tag == "img") {
             node->type = BoxType::Image;
 
@@ -873,10 +888,79 @@ private:
             + g.padding_bottom + g.border_bottom;
     }
 
+    // Замер минимальной (самое длинное слово) и максимальной (вся строка) ширины
+    static std::pair<float, float> measure_cell_min_max(const LayoutNode* node,
+        const StyleStorageSoA& storage, float root_fs, const TextMetrics& tm)
+    {
+        if (!node) return { 0.0f, 0.0f };
+
+        if (node->type == BoxType::Text) {
+            const uint32_t si = effective_style_idx(node);
+            const float fs = storage.font_sizes[si];
+            const std::string& family = storage.font_families[si];
+            const bool bold = storage.font_weights[si] >= 700;
+            const auto fstyle = storage.font_styles[si];
+            const bool italic = (fstyle == style::FontStyle::Italic || fstyle == style::FontStyle::Oblique);
+
+            float w = tm.hasWidth() ? tm.measure_width(node->text_content, fs, family, bold, italic)
+                : node->text_content.size() * std::max(1.0f, fs * 0.55f);
+            // Для одного слова min и max совпадают
+            return { w, w };
+        }
+
+        // Для контейнеров (Inline, Block и т.д.) собираем суммы
+        float max_w = 0.0f;
+        float min_w = 0.0f;
+        float inline_group_max = 0.0f;
+        float inline_group_min = 0.0f;
+        bool has_inline = false;
+
+        const uint32_t si = effective_style_idx(node);
+        const float fs = storage.font_sizes[si];
+        const Viewport vp{};
+
+        for (const auto& child : node->children) {
+            if (child->style_soa_idx != UINT32_MAX && storage.positions[child->style_soa_idx] == style::Position::Absolute) continue;
+
+            auto [c_min, c_max] = measure_cell_min_max(child.get(), storage, root_fs, tm);
+
+            if (child->is_block_level()) {
+                if (has_inline) {
+                    max_w = std::max(max_w, inline_group_max);
+                    min_w = std::max(min_w, inline_group_min);
+                    has_inline = false;
+                    inline_group_max = 0.0f;
+                    inline_group_min = 0.0f;
+                }
+                max_w = std::max(max_w, c_max);
+                min_w = std::max(min_w, c_min);
+            }
+            else {
+                has_inline = true;
+                inline_group_max += c_max;
+                // Для min-content слова переносятся, поэтому берем максимум из слов
+                inline_group_min = std::max(inline_group_min, c_min);
+            }
+        }
+
+        if (has_inline) {
+            max_w = std::max(max_w, inline_group_max);
+            min_w = std::max(min_w, inline_group_min);
+        }
+
+        // Добавляем padding/border
+        const float extra = resolve_px(storage.padding_left[si], fs, root_fs, vp, 0.0f)
+            + resolve_px(storage.padding_right[si], fs, root_fs, vp, 0.0f)
+            + resolve_px(storage.border_left_width[si], fs, root_fs, vp, 0.0f)
+            + resolve_px(storage.border_right_width[si], fs, root_fs, vp, 0.0f);
+
+        return { min_w + extra, max_w + extra };
+    }
+
     static void layout_table(LayoutNode* table,
         float parent_width,
         const Viewport& vp,
-        const StyleStorageSoA& storage, // <--- ДОБАВЬ const
+        const StyleStorageSoA& storage,
         float root_fs,
         const TextMetrics& tm)
     {
@@ -889,9 +973,11 @@ private:
         float h_extra = g.margin_left + g.margin_right + g.padding_left + g.padding_right + g.border_left + g.border_right;
         float content_width = std::max(0.0f, parent_width - h_extra);
 
+        bool width_auto = true;
         if (si != UINT32_MAX) {
             const style::Length& w = storage.widths[si];
             if (!w.is_auto() && !w.is_none()) {
+                width_auto = false;
                 float spec = resolve_px(w, fs, root_fs, vp, parent_width);
                 if (storage.box_sizings[si] == BoxSizing::BorderBox)
                     spec -= (g.padding_left + g.padding_right + g.border_left + g.border_right);
@@ -899,7 +985,6 @@ private:
             }
         }
 
-        // Читаем cellpadding (отступы в ячейках)
         float cell_padding = 0.0f;
         if (si != UINT32_MAX) {
             const DOMNode* dom = storage.dom_nodes[si];
@@ -914,7 +999,6 @@ private:
             }
         }
 
-        // 1. Собираем все строки (пропускаем tbody/thead)
         std::vector<LayoutNode*> rows;
         std::function<void(LayoutNode*)> collect_rows = [&](LayoutNode* n) {
             for (auto& c : n->children) {
@@ -932,15 +1016,13 @@ private:
 
         struct CellPlacement {
             LayoutNode* cell;
-            int r, c;
-            int colspan, rowspan;
+            int r, c, colspan, rowspan;
         };
         std::vector<CellPlacement> placements;
-
         int num_cols = 0;
         std::vector<std::vector<int>> occupied;
 
-        // 2. Строим сетку (Grid) с учетом colspan/rowspan
+        // 1. Строим сетку
         for (int r = 0; r < (int)rows.size(); ++r) {
             int c = 0;
             for (auto& child : rows[r]->children) {
@@ -963,61 +1045,75 @@ private:
                         occupied[r + rr][c + cc] = 1;
                     }
                 }
-
                 placements.push_back({ child.get(), r, c, colspan, rowspan });
                 num_cols = std::max(num_cols, c + colspan);
                 c += colspan;
             }
         }
 
-        // 3. Вычисляем ширины колонок
-        std::vector<float> col_widths(num_cols, 0.0f);
+        // 2. Рассчитываем Min и Max ширины для каждой колонки
+        std::vector<float> col_min(num_cols, 0.0f);
+        std::vector<float> col_max(num_cols, 0.0f);
 
         for (auto& p : placements) {
-            float cell_max_w = measure_intrinsic(p.cell, storage, root_fs, tm).content_width;
-            float per_col = cell_max_w / p.colspan;
-            for (int i = 0; i < p.colspan; ++i) {
-                col_widths[p.c + i] = std::max(col_widths[p.c + i], per_col);
-            }
-        }
-
-        for (auto& p : placements) {
+            auto [c_min, c_max] = measure_cell_min_max(p.cell, storage, root_fs, tm);
+            // Влияние явной ширины ячейки
             if (p.cell->style_soa_idx != UINT32_MAX) {
                 const auto& w = storage.widths[p.cell->style_soa_idx];
                 if (!w.is_auto() && !w.is_none()) {
                     float spec = resolve_px(w, storage.font_sizes[p.cell->style_soa_idx], root_fs, vp, content_width);
-                    float per_col = spec / p.colspan;
-                    for (int i = 0; i < p.colspan; ++i) {
-                        col_widths[p.c + i] = std::max(col_widths[p.c + i], per_col);
-                    }
+                    c_min = std::max(c_min, spec);
+                    c_max = std::max(c_max, spec);
                 }
             }
+            // Распределяем требования к ширине по колонкам (включая colspan)
+            float per_col_min = c_min / p.colspan;
+            float per_col_max = c_max / p.colspan;
+            for (int i = 0; i < p.colspan; ++i) {
+                col_min[p.c + i] = std::max(col_min[p.c + i], per_col_min);
+                col_max[p.c + i] = std::max(col_max[p.c + i], per_col_max);
+            }
         }
 
-        float total_w = 0;
-        for (float w : col_widths) total_w += w;
-
-        bool width_auto = true;
-        if (si != UINT32_MAX) {
-            const style::Length& w = storage.widths[si];
-            if (!w.is_auto() && !w.is_none()) width_auto = false;
+        // 3. Распределяем доступное пространство
+        float total_min = 0.0f, total_max = 0.0f;
+        for (int i = 0; i < num_cols; ++i) {
+            total_min += col_min[i];
+            total_max += col_max[i];
         }
+
+        std::vector<float> col_widths(num_cols, 0.0f);
 
         if (width_auto) {
-            content_width = total_w;
+            // Если ширина таблицы auto, она занимает ровно total_max (но не меньше parent_width)
+            content_width = std::max(total_max, std::min(content_width, parent_width));
+        }
+
+        if (content_width <= total_min) {
+            // Места мало — берем min и сжимаем пропорционально
+            float scale = (total_min > 0) ? (content_width / total_min) : 1.0f;
+            for (int i = 0; i < num_cols; ++i) col_widths[i] = col_min[i] * scale;
+        }
+        else if (content_width >= total_max) {
+            // Места много — берем max и распределяем излишек пропорционально max_width
+            for (int i = 0; i < num_cols; ++i) col_widths[i] = col_max[i];
+            float extra = content_width - total_max;
+            if (total_max > 0) {
+                for (int i = 0; i < num_cols; ++i) col_widths[i] += extra * (col_max[i] / total_max);
+            }
+            else {
+                for (int i = 0; i < num_cols; ++i) col_widths[i] += extra / num_cols;
+            }
         }
         else {
-            if (total_w < content_width) {
-                float extra = (content_width - total_w) / num_cols;
-                for (int i = 0; i < num_cols; ++i) col_widths[i] += extra;
-            }
-            else if (total_w > content_width && total_w > 0) {
-                float scale = content_width / total_w;
-                for (int i = 0; i < num_cols; ++i) col_widths[i] *= scale;
+            // Золотая середина: интерполируем между min и max
+            float ratio = (content_width - total_min) / (total_max - total_min);
+            for (int i = 0; i < num_cols; ++i) {
+                col_widths[i] = col_min[i] + ratio * (col_max[i] - col_min[i]);
             }
         }
 
-        // 4. Расставляем ячейки
+        // 4. Расстановка ячеек
         float inner_x = g.x + g.border_left + g.padding_left;
         float y_cursor = g.y + g.border_top + g.padding_top;
         std::vector<float> row_y(rows.size(), 0.0f);
@@ -1026,6 +1122,7 @@ private:
             row_y[r] = y_cursor;
             float row_height = 0;
 
+            // Сначала раскладываем ячейки, чтобы узнать их реальную высоту
             for (auto& p : placements) {
                 if (p.r == r) {
                     float cell_x = inner_x;
@@ -1042,9 +1139,33 @@ private:
                 }
             }
 
-            // Выравниваем высоту всех ячеек в строке
+            // Выравниваем ячейки по вертикали (valign)
             for (auto& p : placements) {
-                if (p.r == r) p.cell->geometry.height = row_height;
+                if (p.r == r) {
+                    float actual_h = p.cell->geometry.height;
+                    float offset = 0.0f;
+
+                    if (p.cell->style_soa_idx != UINT32_MAX) {
+                        auto va = storage.vertical_aligns[p.cell->style_soa_idx];
+                        if (va == style::VerticalAlign::Middle) {
+                            offset = (row_height - actual_h) * 0.5f;
+                        }
+                        else if (va == style::VerticalAlign::Bottom) {
+                            offset = row_height - actual_h;
+                        }
+                        // Top — offset остается 0
+                    }
+
+                    // Принудительно задаем высоту строки
+                    p.cell->geometry.height = row_height;
+
+                    // Сдвигаем внутренний контент (детей), если надо
+                    if (offset > 0.0f) {
+                        for (auto& child : p.cell->children) {
+                            shift_subtree(child.get(), 0.0f, offset);
+                        }
+                    }
+                }
             }
             y_cursor += row_height;
         }
@@ -1052,11 +1173,11 @@ private:
         g.width = g.border_left + g.padding_left + content_width + g.padding_right + g.border_right;
         g.height = y_cursor - g.y + g.padding_bottom + g.border_bottom;
 
-        // Обновляем координаты самих строк (нужно для рендерера)
         for (int r = 0; r < (int)rows.size(); ++r) {
             rows[r]->geometry.x = inner_x;
             rows[r]->geometry.y = row_y[r];
             rows[r]->geometry.width = content_width;
+            rows[r]->geometry.height = (r + 1 < (int)rows.size()) ? (row_y[r + 1] - row_y[r]) : (y_cursor - row_y[r]);
         }
     }
     // Flex-контейнер — новый путь в диспетчере.
@@ -1559,7 +1680,7 @@ private:
                         if (it.node->type == BoxType::Text
                             && it.node->text_content == " ") ++spaces;
                     }
-                    if (spaces > 0) {
+                    if (spaces > 2) {
                         per_space = extra / float(spaces);
                         justify_mode = true;
                     }

@@ -8,6 +8,7 @@
 #include "parsers/selector_matcher/display_list_builder.h"
 #include "layout/headers/layout_tree_builder.h"
 #include <QImage>
+#include <QUrl>
 #include <QRectF>
 #include <QDebug>
 #include <QEventLoop>
@@ -83,6 +84,18 @@ namespace {
         return m;
     }
 
+    void collect_image_srcs(DOMNode* n, std::vector<std::string>& out) {
+        if (!n) return;
+        if (n->type == NodeType::Element && n->tag_name == "img") {
+            for (const auto& kv : n->attributes) {
+                if (std::string_view(kv.first.data(), kv.first.size()) == "src") {
+                    out.push_back(std::string(kv.second));
+                }
+            }
+        }
+        for (DOMNode* c : n->children) collect_image_srcs(c, out);
+    }
+
 } // namespace
 
 // ============================================================
@@ -116,6 +129,7 @@ void Page::releaseListeners() {
 void Page::loadHtml(const std::string& html,
     const std::string& base_url,
     std::function<std::string(const std::string&)> fetch_resource,
+    AsyncImageFetcher fetch_image,
     float viewport_w, float viewport_h,
     const LayoutTreeBuilder::TextMetrics& tm)
 {
@@ -133,6 +147,8 @@ void Page::loadHtml(const std::string& html,
     display_list_.clear();
     dom_dirty_ = false;
     external_css_.clear(); // Сброс внешнего CSS
+    base_url_ = base_url;
+    image_cache_.clear(); // Очищаем кэш при новой загрузке
 
     HTMLParser hp(arena_);
     DOMNode* doc = hp.parse(html);
@@ -163,8 +179,24 @@ void Page::loadHtml(const std::string& html,
                 }
             }
         }
-        qDebug() << "[Page] Total external CSS size:" << external_css_.size();
     }
+    if (fetch_image && !base_url.empty()) {
+        std::vector<std::string> srcs;
+        collect_image_srcs(document_, srcs);
+        for (const std::string& src : srcs) {
+            QUrl base_qurl(QString::fromStdString(base_url));
+            QUrl abs_qurl = base_qurl.resolved(QUrl(QString::fromStdString(src)));
+            std::string abs_url = abs_qurl.toString().toStdString();
+
+            if (image_cache_.find(abs_url) == image_cache_.end()) {
+                fetch_image(abs_url, [this, abs_url](QImage img) {
+                    this->addImage(abs_url, img);
+                    });
+            }
+        }
+    }
+
+    qDebug() << "[Page] Total external CSS size:" << external_css_.size();
     // ----------------------------------
 
     js_ = std::make_unique<JsEngine>();
@@ -178,6 +210,13 @@ void Page::loadHtml(const std::string& html,
 // ============================================================
 //  Скрипты
 // ============================================================
+void Page::addImage(const std::string& url, const QImage& img) {
+    image_cache_[url] = std::make_shared<QImage>(img);
+    // Если страница уже отрисована, пересчитываем layout
+    if (layout_) {
+        rebuild();
+    }
+}
 
 void Page::runInlineScripts() {
     std::vector<DOMNode*> scripts;
@@ -219,18 +258,32 @@ void Page::rebuild() {
     // 2. Каскад в SoA.
     qDebug() << "Author CSS preview:" << QString::fromStdString(author_css.substr(0, 200));
 
-    // Проверим, сколько правил именно в author
-    for (const auto& rule : author->rules) {
-        if (!rule.selectors.empty()) {
-            qDebug() << "Rule selector: " << rule.selectors[0].compounds[0].parts[0].name.c_str();
-        }
-    }
     storage_ = StyleTreeBuilder::build(document_, sources);
 
 
     // 3. Layout с текстовыми метриками (Qt или эвристика).
-    layout_ = LayoutTreeBuilder::build(storage_,
-        makeImageMetrics(base_dir_));
+        // 3. Layout с картинками из кэша
+    LayoutTreeBuilder::ImageMetrics img_metrics;
+    img_metrics.intrinsic_size = [this](const std::string& src) -> std::pair<float, float> {
+        QUrl base_qurl(QString::fromStdString(base_url_));
+        QUrl abs_qurl = base_qurl.resolved(QUrl(QString::fromStdString(src)));
+        std::string abs_url = abs_qurl.toString().toStdString();
+
+        auto it = image_cache_.find(abs_url);
+        if (it != image_cache_.end() && it->second && !it->second->isNull()) {
+            return { float(it->second->width()), float(it->second->height()) };
+        }
+        // Если не в кэше, пробуем локальный файл
+        const std::string path = resolvePath(base_dir_, src);
+        QImage img;
+        if (img.load(QString::fromStdString(path)))
+            return { float(img.width()), float(img.height()) };
+
+        return { 0.0f, 0.0f };
+        };
+
+    layout_ = LayoutTreeBuilder::build(storage_, img_metrics);
+
     if (layout_) {
         LayoutTreeBuilder::Viewport vp{ viewport_w_, viewport_h_ };
         LayoutTreeBuilder::compute_layout(layout_.get(), vp, storage_,
@@ -239,9 +292,11 @@ void Page::rebuild() {
 
     // 4. Display list.
     if (layout_)
-        display_list_ = DisplayListBuilder::build(layout_.get(), storage_);
+        display_list_ = DisplayListBuilder::build(layout_.get(), storage_, base_url_, image_cache_);
 
     dom_dirty_ = false;
+
+    if (on_layout_updated_) on_layout_updated_();
 }
 
 void Page::relayout() {

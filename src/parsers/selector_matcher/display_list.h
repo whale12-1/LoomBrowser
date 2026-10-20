@@ -2,6 +2,8 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include <memory>
+#include <QImage>
 
 enum class DisplayItemType : uint8_t {
     Rect,   // background / border
@@ -13,7 +15,7 @@ struct DisplayItem {
     DisplayItemType type{ DisplayItemType::Rect };
     float x{ 0.0f }, y{ 0.0f };
     float width{ 0.0f }, height{ 0.0f };
-    uint32_t color{ 0x000000FFu };      // 0xRRGGBBAA
+    uint32_t color{ 0x00000000u };      // 0xRRGGBBAA
     float opacity{ 1.0f };
 
     // ---- border-radius: радиусы в px (уже резолвлены) ----
@@ -41,20 +43,16 @@ struct DisplayItem {
     float letter_spacing{ 0.0f };
 
     // ---- Image ----
-    std::string image_path;
-    // true → это background-image (применяются bg_* поля ниже);
-    // false → это <img> (stretch по x/y/w/h).
+    std::string image_path; // Оставляем для совместимости
+    std::shared_ptr<QImage> image; // <--- Новое поле
     bool is_background{ false };
-    uint8_t  bg_repeat{ 0 };      // 0=repeat 1=repeat-x 2=repeat-y 3=no-repeat
-    uint8_t  bg_size_kind{ 0 };   // 0=auto 1=cover 2=contain 3=explicit
-    float    bg_size_w{ 0.0f };   // px, только для kind==explicit
+    uint8_t  bg_repeat{ 0 };
+    uint8_t  bg_size_kind{ 0 };
+    float    bg_size_w{ 0.0f };
     float    bg_size_h{ 0.0f };
-    // Позиция: если unit == 1 (percent) → рендерер сам считает offset
-    //   offset = (container_size - image_size) * percent / 100
-    // Если unit == 0 (px) → offset уже в value (готовый сдвиг).
     float    bg_pos_x{ 0.0f };
     float    bg_pos_y{ 0.0f };
-    uint8_t  bg_pos_x_unit{ 1 };  // 0=px 1=percent
+    uint8_t  bg_pos_x_unit{ 1 };
     uint8_t  bg_pos_y_unit{ 1 };
 };
 

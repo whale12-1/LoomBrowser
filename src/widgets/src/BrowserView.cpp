@@ -146,9 +146,18 @@ void BrowserCanvas::renderToBacking() {
             break;
         }
         case DisplayItemType::Image: {
-            if (item.image_path.empty()) break;
             QImage img;
-            if (!img.load(QString::fromStdString(item.image_path))) break;
+            if (item.image) {
+                img = *item.image; // <--- Берем готовую картинку из памяти!
+            }
+            else if (!item.image_path.empty()) {
+                if (!img.load(QString::fromStdString(item.image_path))) break; // Fallback на диск
+            }
+            else {
+                break;
+            }
+
+            // Просто рисуем то, что достали
             p.drawImage(QRectF(item.x, item.y, item.width, item.height), img);
             break;
         }
@@ -240,9 +249,18 @@ void BrowserCanvas::paintEvent(QPaintEvent* ev) {
             break;
         }
         case DisplayItemType::Image: {
-            if (item.image_path.empty()) break;
             QImage img;
-            if (!img.load(QString::fromStdString(item.image_path))) break;
+            if (item.image) {
+                img = *item.image; // <--- Берем готовую картинку из памяти!
+            }
+            else if (!item.image_path.empty()) {
+                if (!img.load(QString::fromStdString(item.image_path))) break; // Fallback на диск
+            }
+            else {
+                break;
+            }
+
+            // Просто рисуем то, что достали
             p.drawImage(QRectF(item.x, item.y, item.width, item.height), img);
             break;
         }

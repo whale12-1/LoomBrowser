@@ -59,7 +59,7 @@ set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
 # --- ПОИСК ПАКЕТОВ QT6 И СИСТЕМНЫХ БИБЛИОТЕК ---
-find_package(Qt6 REQUIRED COMPONENTS Widgets OpenGLWidgets Network WebSockets)
+find_package(Qt6 REQUIRED COMPONENTS Widgets OpenGLWidgets Network WebSockets Svg)
 find_package(OpenGL REQUIRED)
 find_package(Freetype REQUIRED)
 
@@ -149,6 +149,7 @@ target_link_libraries(ToyBrowserCore PUBLIC
     Qt6::OpenGLWidgets
     Qt6::Network
     Qt6::WebSockets
+    Qt6::Svg
     OpenGL::GL
     Freetype::Freetype
     OpenSSL::SSL
@@ -165,7 +166,6 @@ set_target_properties(ToyBrowserEngine PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/Debug"
 )
 
-# --- АВТОКОПИРОВАНИЕ ПЛАГИНОВ QT (platforms и tls) ---
 if(DEFINED VCPKG_INSTALLED_DIR)
     set(QT_PLUGINS_DIR "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/qt6/plugins")
     if(NOT EXISTS "${QT_PLUGINS_DIR}/platforms")
@@ -179,7 +179,12 @@ if(DEFINED VCPKG_INSTALLED_DIR)
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${QT_PLUGINS_DIR}/tls"
             "$<TARGET_FILE_DIR:ToyBrowserEngine>/tls"
-        COMMENT "Copying Qt platform & TLS plugins to output directory..."
+        # --- НОВОЕ: Копируем плагины картинок (gif, svg, jpeg, png) ---
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${QT_PLUGINS_DIR}/imageformats"
+            "$<TARGET_FILE_DIR:ToyBrowserEngine>/imageformats"
+        # -------------------------------------------------------------
+        COMMENT "Copying Qt plugins (platforms, tls, imageformats) to output directory..."
     )
 endif()
 
@@ -256,7 +261,12 @@ if(DEFINED VCPKG_INSTALLED_DIR AND TARGET loom-render)
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${_LOOM_QT_PLUGINS}/platforms"
                 "$<TARGET_FILE_DIR:loom-render>/platforms"
-            COMMENT "Copying Qt platform plugins to loom-render..."
+            # --- НОВОЕ ---
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${_LOOM_QT_PLUGINS}/imageformats"
+                "$<TARGET_FILE_DIR:loom-render>/imageformats"
+            # ------------
+            COMMENT "Copying Qt platform & imageformats plugins to loom-render..."
         )
     endif()
 endif()

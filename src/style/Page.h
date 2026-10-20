@@ -13,6 +13,10 @@
 #include "layout/headers/layout_tree_builder.h"   // для TextMetrics
 #include "js/JSEngine.h"
 
+#include <QImage>
+
+using AsyncImageFetcher = std::function<void(const std::string&, std::function<void(QImage)>)>;
+
 // Слушатель события, привязанный к DOMNode.
 struct JsListener {
     std::string type;
@@ -32,12 +36,14 @@ public:
     Page(const Page&) = delete;
     Page& operator=(const Page&) = delete;
 
+    std::function<void()> on_layout_updated_;
     // Парсит HTML, выполняет inline-скрипты, делает layout.
     // tm — текстовые метрики для точного совпадения с Qt painter'ом.
     // Если не заданы — layout использует эвристику (0.55*fs на символ).
     void loadHtml(const std::string& html,
         const std::string& base_url,
-        std::function<std::string(const std::string&)> fetch_resource,
+        std::function<std::string(const std::string&)> fetch_css,
+        AsyncImageFetcher fetch_image, // <--- Новый параметр
         float viewport_w, float viewport_h,
         const LayoutTreeBuilder::TextMetrics& tm);
 
@@ -75,6 +81,10 @@ private:
 
     // Освобождение JS-хэндлеров. Должно вызываться ДО js_.reset().
     void releaseListeners();
+
+    void addImage(const std::string& url, const QImage& img);
+    std::unordered_map<std::string, std::shared_ptr<QImage>> image_cache_;
+    std::string base_url_;
 
     // Порядок членов критичен: arena_ разрушится последней.
     ArenaAllocator              arena_;

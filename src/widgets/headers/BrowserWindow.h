@@ -4,7 +4,7 @@
 #include <QString>
 #include <memory>
 #include <vector>
-
+#include <QNetworkAccessManager>
 #include "BrowserToolBar.h"
 #include "BrowserView.h"
 #include "../net/NetworkBackend.h"
@@ -41,6 +41,7 @@ private:
         const std::string& error);
     void showErrorPage(const QString& title, const QString& details);
 
+    QNetworkAccessManager* net_manager_ = nullptr;
     BrowserToolbar* toolbar_{};
     BrowserView* view_{};
     QLabel* status_label_{};

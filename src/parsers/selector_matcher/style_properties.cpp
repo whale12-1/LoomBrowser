@@ -120,16 +120,70 @@ namespace style_props {
     // =========================================================
     //  Шортхенды (Margin, Padding, Border)
     // =========================================================
+
     bool expand_shorthand(const std::string& prop_name, const std::string& value,
         std::vector<std::pair<std::string, std::string>>& out)
     {
-        // ... Твой код из expand_shorthand_1to4 ...
-        if (prop_name == "margin") {
-            // парсим 1-4 значения
-            out.push_back({ "margin-top", "..." });
-            // ...
+        auto split = [](const std::string& val) {
+            std::vector<std::string> tokens;
+            std::string cur;
+            for (char c : val) {
+                if (std::isspace(static_cast<unsigned char>(c))) {
+                    if (!cur.empty()) { tokens.push_back(cur); cur.clear(); }
+                }
+                else {
+                    cur += c;
+                }
+            }
+            if (!cur.empty()) tokens.push_back(cur);
+            return tokens;
+            };
+
+        auto apply_1to4 = [&](const std::string& prefix, const std::string& suffix, const std::vector<std::string>& tokens) {
+            if (tokens.empty()) return false;
+            std::string top, right, bottom, left;
+            if (tokens.size() == 1) { top = right = bottom = left = tokens[0]; }
+            else if (tokens.size() == 2) { top = bottom = tokens[0]; right = left = tokens[1]; }
+            else if (tokens.size() == 3) { top = tokens[0]; right = left = tokens[1]; bottom = tokens[2]; }
+            else if (tokens.size() >= 4) { top = tokens[0]; right = tokens[1]; bottom = tokens[2]; left = tokens[3]; }
+            else return false;
+
+            out.push_back({ prefix + "top" + suffix, top });
+            out.push_back({ prefix + "right" + suffix, right });
+            out.push_back({ prefix + "bottom" + suffix, bottom });
+            out.push_back({ prefix + "left" + suffix, left });
+            return true;
+            };
+
+        if (prop_name == "margin")       return apply_1to4("margin-", "", split(value));
+        if (prop_name == "padding")      return apply_1to4("padding-", "", split(value));
+        if (prop_name == "border-width") return apply_1to4("border-", "-width", split(value));
+        if (prop_name == "border-color") return apply_1to4("border-", "-color", split(value));
+
+        if (prop_name == "border") {
+            auto tokens = split(value);
+            std::string width = "medium";
+            std::string color = "currentcolor";
+
+            for (const auto& t : tokens) {
+                if (std::isdigit(static_cast<unsigned char>(t[0])) || t == "thin" || t == "medium" || t == "thick") {
+                    width = t;
+                }
+                else if (t[0] == '#' || t.rfind("rgb", 0) == 0 || std::isalpha(static_cast<unsigned char>(t[0]))) {
+                    // Игнорируем стили линий, нам нужен только цвет
+                    if (t != "solid" && t != "dashed" && t != "dotted" && t != "none") {
+                        color = t;
+                    }
+                }
+            }
+
+            for (const std::string& side : { "top", "right", "bottom", "left" }) {
+                out.push_back({ "border-" + side + "-width", width });
+                out.push_back({ "border-" + side + "-color", color });
+            }
             return true;
         }
+
         return false;
     }
 

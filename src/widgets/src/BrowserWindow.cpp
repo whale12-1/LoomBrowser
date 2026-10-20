@@ -13,11 +13,14 @@
 #include <QStatusBar>
 #include <QLabel>
 #include <QDebug>
+#include <QImage>
 #include <QFontDatabase>
 #include <QNetworkAccessManager>
 #include <QNetworkRequest>
 #include <QNetworkReply>
 #include <QEventLoop>
+#include <QSvgRenderer>
+#include <QPainter>
 
 namespace {
 
@@ -102,7 +105,7 @@ BrowserWindow::BrowserWindow(std::unique_ptr<net::NetworkBackend> backend,
 
     status_label_ = new QLabel("Ready", this);
     statusBar()->addPermanentWidget(status_label_);
-
+    net_manager_ = new QNetworkAccessManager(this);
     connect(toolbar_, &BrowserToolbar::backRequested, this, &BrowserWindow::onBack);
     connect(toolbar_, &BrowserToolbar::forwardRequested, this, &BrowserWindow::onForward);
     connect(toolbar_, &BrowserToolbar::reloadRequested, this, &BrowserWindow::onReload);
@@ -215,8 +218,72 @@ void BrowserWindow::onHttpResponse(const net::HttpResponse& resp) {
         };
 
 
+    // Лямбда для асинхронной загрузки картинок
+    auto fetch_image_async = [this](const std::string& url, std::function<void(QImage)> on_loaded) {
+        QNetworkRequest req(QUrl(QString::fromStdString(url)));
+        req.setHeader(QNetworkRequest::UserAgentHeader, "Mozilla/5.0");
+        QNetworkReply* reply = net_manager_->get(req);
+
+        QObject::connect(reply, &QNetworkReply::finished, [reply, on_loaded, url]() {
+            if (reply->error() == QNetworkReply::NoError) {
+                QByteArray data = reply->readAll();
+                QImage img;
+
+                // 1. Пытаемся загрузить как обычную картинку (PNG, JPG)
+                if (img.loadFromData(data)) {
+                    qDebug() << "[IMG] Loaded standard:" << QString::fromStdString(url) << img.width() << "x" << img.height();
+                    on_loaded(img);
+                }
+                // 2. Если не вышло и это SVG — используем QSvgRenderer
+                else if (url.find(".svg") != std::string::npos) {
+                    QSvgRenderer renderer(data);
+                    if (renderer.isValid()) {
+                        QSize size = renderer.defaultSize();
+                        if (size.isEmpty()) size = QSize(18, 18);
+
+                        // ИСПОЛЬЗУЕМ PREMULTIPLIED ДЛЯ ПРАВИЛЬНОЙ ПРОЗРАЧНОСТИ
+                        img = QImage(size, QImage::Format_ARGB32_Premultiplied);
+                        img.fill(Qt::transparent);
+
+                        QPainter p(&img);
+                        p.setCompositionMode(QPainter::CompositionMode_Source);
+                        p.fillRect(img.rect(), Qt::transparent);
+                        p.setCompositionMode(QPainter::CompositionMode_SourceOver);
+
+                        renderer.render(&p);
+                        p.end();
+
+                        qDebug() << "[IMG] Loaded SVG:" << QString::fromStdString(url) << img.width() << "x" << img.height();
+                        on_loaded(img);
+                    }
+                }
+                // 3. Если картинка битая (например, s.gif), отдаём прозрачный пиксель
+                else {
+                    qDebug() << "[IMG] Failed to parse:" << QString::fromStdString(url) << " - creating transparent placeholder.";
+                    img = QImage(1, 1, QImage::Format_ARGB32_Premultiplied);
+                    img.fill(Qt::transparent);
+                    on_loaded(img);
+                }
+            }
+            else {
+                qDebug() << "[IMG] Network Error:" << reply->errorString() << QString::fromStdString(url);
+                QImage img(1, 1, QImage::Format_ARGB32_Premultiplied);
+                img.fill(Qt::transparent);
+                on_loaded(img);
+            }
+            reply->deleteLater();
+            });
+        };
+
     page_ = std::make_unique<Page>();
-    page_->loadHtml(html, base_url, fetch_resource, float(vw), float(vh), tm);
+    // ДОБАВЬ ЭТУ СТРОКУ:
+    page_->on_layout_updated_ = [this]() {
+        if (page_) {
+            view_->setDisplayList(page_->displayList());
+        }
+        };
+
+    page_->loadHtml(html, base_url, fetch_resource, fetch_image_async, float(vw), float(vh), tm);
 
     view_->setDisplayList(page_->displayList());
     status_label_->setText(
@@ -255,7 +322,7 @@ void BrowserWindow::showErrorPage(const QString& title, const QString& details) 
     const auto tm = makeQtTextMetrics(view_->canvas());
 
     page_ = std::make_unique<Page>();
-    page_->loadHtml(html, "", nullptr, float(vw), float(vh), tm);
+    page_->loadHtml(html, "", nullptr, nullptr, float(vw), float(vh), tm);
 
     view_->setDisplayList(page_->displayList());
     status_label_->setText(title);

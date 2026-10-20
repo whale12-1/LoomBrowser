@@ -3,18 +3,19 @@
 #include "../layout/headers/layout_node.h"
 #include "style_storage_soa.h"
 #include <algorithm>
+#include <QUrl>
+#include <QString>
 
 class DisplayListBuilder {
 public:
     static DisplayList build(const LayoutNode* root,
-        const StyleStorageSoA& storage)
+        const StyleStorageSoA& storage,
+        const std::string& base_url = "",
+        const std::unordered_map<std::string, std::shared_ptr<QImage>>& image_cache = {})
     {
         DisplayList out;
         if (!root) return out;
 
-        // Вычисляем реальные размеры документа, обходя всё дерево.
-        // Это нужно, если html/body имеют фиксированную высоту, а контент
-        // внутри них вылезает за пределы (как в обычных браузерах).
         float max_x = 0.0f;
         float max_y = 0.0f;
         compute_bounds(root, max_x, max_y);
@@ -22,7 +23,8 @@ public:
         out.document_width = max_x;
         out.document_height = max_y;
 
-        walk(root, storage, out,
+        // Передаем base_url и image_cache в walk
+        walk(root, storage, out, base_url, image_cache,
             /*has_clip=*/false, 0, 0, 0, 0);
         return out;
     }
@@ -79,6 +81,8 @@ private:
 
     static void walk(const LayoutNode* node,
         const StyleStorageSoA& storage, DisplayList& out,
+        const std::string& base_url,
+        const std::unordered_map<std::string, std::shared_ptr<QImage>>& image_cache,
         bool parent_has_clip,
         float parent_clip_x, float parent_clip_y,
         float parent_clip_w, float parent_clip_h)
@@ -88,13 +92,23 @@ private:
         const float w = node->geometry.width;
         const float h = node->geometry.height;
 
+        // Вспомогательная лямбда для поиска картинки в кэше
+        auto get_img = [&](const std::string& src) -> std::shared_ptr<QImage> {
+            if (src.empty()) return nullptr;
+            QUrl base_qurl(QString::fromStdString(base_url));
+            QUrl abs_qurl = base_qurl.resolved(QUrl(QString::fromStdString(src)));
+            std::string abs_url = abs_qurl.toString().toStdString();
+            auto it = image_cache.find(abs_url);
+            return (it != image_cache.end()) ? it->second : nullptr;
+            };
+
         // ---- <br> — пропускаем сам узел, но обходим детей ----
         if (node->style_soa_idx != UINT32_MAX) {
             const DOMNode* dom = storage.dom_nodes[node->style_soa_idx];
             if (dom && std::string_view(dom->tag_name.data(),
                 dom->tag_name.size()) == "br") {
                 for (const auto& c : node->children)
-                    walk(c.get(), storage, out,
+                    walk(c.get(), storage, out, base_url, image_cache,
                         parent_has_clip, parent_clip_x, parent_clip_y,
                         parent_clip_w, parent_clip_h);
                 return;
@@ -175,60 +189,63 @@ private:
             if (!bg_img.empty()) {
                 DisplayItem it;
                 it.type = DisplayItemType::Image;
+                it.color = 0x00000000u;
                 it.x = ax; it.y = ay; it.width = w; it.height = h;
                 it.image_path = bg_img;
-                it.opacity = item_opacity;
-                it.is_background = true;
-                fill_radius(it, node, storage, w, h);
-                fill_clip(it, has_clip, clip_x, clip_y, clip_w, clip_h);
+                it.image = get_img(bg_img); // <--- БЕРЕМ ИЗ КЭША
+                if (it.image && (it.image->width() > 1 || it.image->height() > 1)) {
+                    it.opacity = item_opacity;
+                    it.is_background = true;
+                    fill_radius(it, node, storage, w, h);
+                    fill_clip(it, has_clip, clip_x, clip_y, clip_w, clip_h);
+                    // repeat
+                    switch (storage.background_repeats[si]) {
+                    case style::BackgroundRepeat::NoRepeat: it.bg_repeat = 3; break;
+                    case style::BackgroundRepeat::RepeatX:  it.bg_repeat = 1; break;
+                    case style::BackgroundRepeat::RepeatY:  it.bg_repeat = 2; break;
+                    default:                                it.bg_repeat = 0; break;
+                    }
 
-                // repeat
-                switch (storage.background_repeats[si]) {
-                case style::BackgroundRepeat::NoRepeat: it.bg_repeat = 3; break;
-                case style::BackgroundRepeat::RepeatX:  it.bg_repeat = 1; break;
-                case style::BackgroundRepeat::RepeatY:  it.bg_repeat = 2; break;
-                default:                                it.bg_repeat = 0; break;
-                }
+                    // size — резолвим px/percent в builder'е, cover/contain
+                    // оставляем рендереру.
+                    const auto& bsz = storage.background_sizes[si];
+                    switch (bsz.kind) {
+                    case style::BgSizeKind::Auto:    it.bg_size_kind = 0; break;
+                    case style::BgSizeKind::Cover:   it.bg_size_kind = 1; break;
+                    case style::BgSizeKind::Contain: it.bg_size_kind = 2; break;
+                    case style::BgSizeKind::Explicit: {
+                        it.bg_size_kind = 3;
+                        auto rw = [&](const style::Length& l, float base) {
+                            if (l.is_auto() || l.is_none()) return 0.0f;
+                            if (l.unit == Unit::Percent)
+                                return l.value * 0.01f * base;
+                            return l.value;
+                            };
+                        it.bg_size_w = rw(bsz.w, w);
+                        it.bg_size_h = rw(bsz.h, h);
+                        break;
+                    }
+                    }
 
-                // size — резолвим px/percent в builder'е, cover/contain
-                // оставляем рендереру.
-                const auto& bsz = storage.background_sizes[si];
-                switch (bsz.kind) {
-                case style::BgSizeKind::Auto:    it.bg_size_kind = 0; break;
-                case style::BgSizeKind::Cover:   it.bg_size_kind = 1; break;
-                case style::BgSizeKind::Contain: it.bg_size_kind = 2; break;
-                case style::BgSizeKind::Explicit: {
-                    it.bg_size_kind = 3;
-                    auto rw = [&](const style::Length& l, float base) {
-                        if (l.is_auto() || l.is_none()) return 0.0f;
-                        if (l.unit == Unit::Percent)
-                            return l.value * 0.01f * base;
-                        return l.value;
+                    // position
+                    const auto& bp = storage.background_positions[si];
+                    auto set_unit = [](const style::Length& l,
+                        float& out_val, uint8_t& out_unit)
+                        {
+                            if (l.unit == Unit::Percent) {
+                                out_val = l.value;
+                                out_unit = 1;
+                            }
+                            else {
+                                out_val = l.value;
+                                out_unit = 0;
+                            }
                         };
-                    it.bg_size_w = rw(bsz.w, w);
-                    it.bg_size_h = rw(bsz.h, h);
-                    break;
-                }
-                }
+                    set_unit(bp.x, it.bg_pos_x, it.bg_pos_x_unit);
+                    set_unit(bp.y, it.bg_pos_y, it.bg_pos_y_unit);
 
-                // position
-                const auto& bp = storage.background_positions[si];
-                auto set_unit = [](const style::Length& l,
-                    float& out_val, uint8_t& out_unit)
-                    {
-                        if (l.unit == Unit::Percent) {
-                            out_val = l.value;
-                            out_unit = 1;
-                        }
-                        else {
-                            out_val = l.value;
-                            out_unit = 0;
-                        }
-                    };
-                set_unit(bp.x, it.bg_pos_x, it.bg_pos_x_unit);
-                set_unit(bp.y, it.bg_pos_y, it.bg_pos_y_unit);
-
-                out.items.push_back(std::move(it));
+                    out.items.push_back(std::move(it));
+                }
             }
 
             // --- borders (прямые прямоугольники; rounded-border
@@ -301,16 +318,21 @@ private:
             it.x = ax; it.y = ay;
             it.width = w; it.height = h;
             it.image_path = node->image_src;
-            it.opacity = item_opacity;
-            it.is_background = false;
-            fill_radius(it, node, storage, w, h);
-            fill_clip(it, has_clip, clip_x, clip_y, clip_w, clip_h);
-            out.items.push_back(std::move(it));
+            it.image = get_img(node->image_src);
+
+            // --- НОВОЕ: Рисуем только если картинка больше 1x1 ---
+            if (it.image && (it.image->width() > 1 || it.image->height() > 1)) {
+                it.opacity = item_opacity;
+                it.is_background = false;
+                fill_radius(it, node, storage, w, h);
+                fill_clip(it, has_clip, clip_x, clip_y, clip_w, clip_h);
+                out.items.push_back(std::move(it));
+            }
         }
 
         // ---- Дети ----
         for (const auto& c : node->children)
-            walk(c.get(), storage, out,
+            walk(c.get(), storage, out, base_url, image_cache,
                 has_clip, clip_x, clip_y, clip_w, clip_h);
     }
 };
