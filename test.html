@@ -1,36 +1,107 @@
 ﻿<!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="UTF-8">
+    <title>MiniBrowser Showcase</title>
     <style>
         body {
-            background: white;
-            margin: 20px;
+            font-family: "Segoe UI", sans-serif;
+            background-color: #f4f6f8;
+            margin: 0;
+            padding: 60px;
         }
 
-        .grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-            gap: 10px;
-            width: 800px;
-            background: #eee;
-            padding: 10px;
+        .header {
+            text-align: center;
+            margin-bottom: 50px;
         }
 
-        .item {
-            background: lightblue;
-            height: 50px;
-            border: 1px solid blue;
+            .header h1 {
+                font-size: 42px;
+                color: #1a202c;
+                margin: 0 0 10px 0;
+            }
+
+            .header p {
+                font-size: 18px;
+                color: #4a5568;
+                margin: 0;
+            }
+
+        .container {
+            display: flex;
+            justify-content: center;
+            gap: 30px;
+        }
+
+        .card {
+            background-color: #ffffff;
+            border-radius: 12px;
+            padding: 30px;
+            width: 300px;
+            border: 1px solid #e2e8f0;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        }
+
+        .badge {
+            background-color: #3182ce;
+            color: white;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+            display: inline-block;
+            margin-bottom: 20px;
+        }
+
+        .badge-green {
+            background-color: #38a169;
+        }
+
+        .badge-purple {
+            background-color: #805ad5;
+        }
+
+        .card h2 {
+            color: #2d3748;
+            font-size: 22px;
+            margin: 0 0 15px 0;
+        }
+
+        .card p {
+            color: #718096;
+            font-size: 15px;
+            line-height: 1.6;
+            margin: 0;
         }
     </style>
 </head>
 <body>
-    <div class="grid">
-        <div class="item">1</div>
-        <div class="item">2</div>
-        <div class="item">3</div>
-        <div class="item">4</div>
-        <div class="item">5</div>
-        <div class="item">6</div>
+
+    <div class="header">
+        <h1>LoomBrowser Engine</h1>
+        <p>Rendering the web from scratch in C++</p>
     </div>
+
+    <div class="container">
+        <div class="card">
+            <span class="badge">Flexbox</span>
+            <h2>Custom Layout</h2>
+            <p>This card is positioned using a custom implementation of the CSS Flexbox specification, including gaps and alignment.</p>
+        </div>
+
+        <div class="card">
+            <span class="badge badge-green">Cascade</span>
+            <h2>Modern Styling</h2>
+            <p>Supports complex cascade, specificity, border-radius, and basic typography out of the box without a third-party engine.</p>
+        </div>
+
+        <div class="card">
+            <span class="badge badge-purple">Architecture</span>
+            <h2>Arena Allocator</h2>
+            <p>All DOM nodes and CSS rules are allocated in a custom bump allocator for extreme parsing performance.</p>
+        </div>
+    </div>
+
 </body>
 </html>
