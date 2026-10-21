@@ -161,7 +161,6 @@ void Page::loadHtml(const std::string& html,
     std::ofstream out("wikipedia_dump.html");
     out << html;
     out.close();
-    qDebug() << "[Page] HTML dumped to wikipedia_dump.html. Size:" << html.size();
 
 
     // --- НОВОЕ: Загрузка внешних CSS ---

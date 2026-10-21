@@ -4,7 +4,6 @@
 #include <functional>
 #include <algorithm>
 #include <cmath>
-#include <QDebug>
 #include "layout_node.h"
 #include "../parsers/selector_matcher/style_storage_soa.h"
 
@@ -168,9 +167,6 @@ public:
 
             layout_child_fn(item.node, item_x, item_y, item_w, item_h);
         }
-        qDebug() << "[GRID] Container width:" << content_width
-            << "template:" << QString::fromStdString(template_cols)
-            << "cols parsed:" << col_widths.size();
 
         node->geometry.width = pb_h + content_width;
         node->geometry.height = node->geometry.border_top + node->geometry.padding_top + total_height + node->geometry.padding_bottom + node->geometry.border_bottom;
