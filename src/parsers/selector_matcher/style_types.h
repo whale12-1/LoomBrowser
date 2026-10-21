@@ -61,6 +61,7 @@ namespace style {
         BorderTopColor, BorderRightColor, BorderBottomColor, BorderLeftColor,
         VerticalAlign,
         FlexWrap, AlignContent, AlignSelf, Order, RowGap, ColumnGap,
+        GridTemplateColumns, GridTemplateRows, GridAutoRows, GridColumn, GridRow,
         FlexDirection, JustifyContent, AlignItems, FlexGrow, FlexShrink, FlexBasis,
         BorderRadius, BorderTopLeftRadius, BorderTopRightRadius,
         BorderBottomRightRadius, BorderBottomLeftRadius,

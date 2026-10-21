@@ -80,6 +80,12 @@ namespace style_props {
             {"row-gap",         P::RowGap},
             {"column-gap",      P::ColumnGap},
             {"gap",             P::RowGap}, // Обработаем отдельно как шортхенд
+            {"grid-template-columns", P::GridTemplateColumns},
+            {"grid-template-rows",    P::GridTemplateRows},
+            {"grid-auto-rows",        P::GridAutoRows},
+            {"grid-column",           P::GridColumn},
+            {"grid-row",              P::GridRow},
+
         };
         auto it = table.find(name);
         if (it == table.end()) return false;

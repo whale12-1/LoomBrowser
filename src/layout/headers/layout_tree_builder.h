@@ -14,7 +14,7 @@
 #include "float_context.h"
 #include "./parsers/selector_matcher/style_storage_soa.h"
 #include "./parsers/html_parser/headers/dom.h"
-
+#include "grid_layout.h"
 
 class LayoutTreeBuilder {
 public:
@@ -419,6 +419,15 @@ private:
             return;
         }
 
+        if (is_grid_container(node, storage)) {
+            for (auto& c : node->children) {
+                if (c->type == BoxType::Inline) {
+                    c->type = BoxType::Block;
+                }
+            }
+            return;
+        }
+
         if (node->type != BoxType::Block) return;
 
         bool has_inline = false;
@@ -528,6 +537,11 @@ private:
             if (n->style_soa_idx != UINT32_MAX) return n->style_soa_idx;
         }
         return 0;
+    }
+
+    static bool is_grid_container(const LayoutNode* node, const StyleStorageSoA& storage) {
+        if (!node || node->style_soa_idx == UINT32_MAX) return false;
+        return storage.displays[node->style_soa_idx] == style::Display::Grid;
     }
 
     // Определяет, является ли узел flex-контейнером по его стилю.
@@ -1164,6 +1178,38 @@ private:
         // --- НОВОЕ: Диспетчеризация таблиц ---
         if (node->type == BoxType::Table) {
             layout_table(node, parent_width, vp, storage, root_fs, tm);
+            return;
+        }
+
+
+        // --- НОВОЕ: Диспетчеризация Grid ---
+        if (node->style_soa_idx != UINT32_MAX && storage.displays[node->style_soa_idx] == style::Display::Grid) {
+            resolve_box_model(node, storage, vp, parent_width, root_fs);
+
+            const uint32_t si = node->style_soa_idx;
+            const float fs = storage.font_sizes[si];
+            const bool border_box = (storage.box_sizings[si] == BoxSizing::BorderBox);
+            const float pb_h = node->geometry.padding_left + node->geometry.padding_right + node->geometry.border_left + node->geometry.border_right;
+
+            // Вычисляем ширину контейнера
+            float content_width = std::max(0.0f, parent_width - (node->geometry.margin_left + node->geometry.margin_right + pb_h));
+            const style::Length& w = storage.widths[si];
+            if (!w.is_auto() && !w.is_none()) {
+                float spec = resolve_px(w, fs, root_fs, vp, parent_width);
+                content_width = border_box ? std::max(0.0f, spec - pb_h) : std::max(0.0f, spec);
+            }
+            if (override_content_width >= 0.0f) content_width = override_content_width;
+
+            // Вычисляем gap
+            float col_gap = resolve_px(storage.column_gaps[si], fs, root_fs, vp, content_width);
+            float row_gap = resolve_px(storage.row_gaps[si], fs, root_fs, vp, content_width);
+
+            GridLayoutEngine::layout_grid(
+                node, content_width, col_gap, row_gap, storage,
+                [&](LayoutNode* child, float x, float y, float w, float h) {
+                    layout_node(child, x, y, w, vp, storage, root_fs, tm, nullptr, w, h);
+                }
+            );
             return;
         }
         // -------------------------------------

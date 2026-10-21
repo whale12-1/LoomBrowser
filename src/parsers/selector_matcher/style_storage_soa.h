@@ -90,6 +90,12 @@ struct StyleStorageSoA {
     std::vector<float>      line_heights;         // 0.0 = normal
     std::vector<float>      letter_spacings;
 
+    std::vector<std::string> grid_template_columns;
+    std::vector<std::string> grid_template_rows;
+    std::vector<std::string> grid_auto_rows;
+    std::vector<std::string> grid_column;
+    std::vector<std::string> grid_row;
+
     // =========================================================
     // 3. ��������� ��������
     // =========================================================
@@ -185,6 +191,11 @@ struct StyleStorageSoA {
         font_families.push_back(""); // пустая строка = дефолтный шрифт системы
         line_heights.push_back(0.0f);
         letter_spacings.push_back(0.0f);
+        grid_template_columns.push_back("");
+        grid_template_rows.push_back("");
+        grid_auto_rows.push_back("");
+        grid_column.push_back("");
+        grid_row.push_back("");
         custom_props.push_back({});
         explicit_mask.resize((i + 1) * PROP_MASK_WORDS, 0ull);
         return i;

@@ -440,6 +440,11 @@ private:
         case Prop::Order: storage.flex_orders[idx] = std::atoi(v.c_str()); break;
         case Prop::RowGap: storage.row_gaps[idx] = parse_length(v); break;
         case Prop::ColumnGap: storage.column_gaps[idx] = parse_length(v); break;
+        case Prop::GridTemplateColumns: storage.grid_template_columns[idx] = v; break;
+        case Prop::GridTemplateRows:    storage.grid_template_rows[idx] = v; break;
+        case Prop::GridAutoRows:        storage.grid_auto_rows[idx] = v; break;
+        case Prop::GridColumn:          storage.grid_column[idx] = v; break;
+        case Prop::GridRow:             storage.grid_row[idx] = v; break;
 
         case Prop::ZIndex: {
             char* end = nullptr;

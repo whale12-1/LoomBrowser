@@ -3144,3 +3144,132 @@ TEST_CASE("LTB flex order: reorders children", "[ltb][layout][flex][order]") {
     REQUIRE(b->geometry.x == Approx(0.0f).epsilon(0.001));
     REQUIRE(a->geometry.x == Approx(50.0f).epsilon(0.001));
 }
+
+
+// ============================================================
+//  Тесты для CSS-переменных (var) и calc()
+// ============================================================
+
+TEST_CASE("CSS: var() resolves simple variable", "[css][var]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div class='a'></div>",
+        ":root { --my-color: red; } "
+        ".a { background-color: var(--my-color); width: 10px; height: 10px; }");
+
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+    bool found_red = false;
+    for (const auto& it : dl.items) {
+        if (it.type == DisplayItemType::Rect && it.color == 0xFF0000FFu) found_red = true;
+    }
+    REQUIRE(found_red);
+}
+
+TEST_CASE("CSS: var() with fallback", "[css][var]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div class='a'></div>",
+        ".a { background-color: var(--undefined-color, blue); width: 10px; height: 10px; }");
+
+    DisplayList dl = DisplayListBuilder::build(p.root.get(), p.storage);
+    bool found_blue = false;
+    for (const auto& it : dl.items) {
+        if (it.type == DisplayItemType::Rect && it.color == 0x0000FFFFu) found_blue = true;
+    }
+    REQUIRE(found_blue);
+}
+
+TEST_CASE("CSS: calc() resolves basic math", "[css][calc]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div class='a'></div>",
+        ".a { display: block; width: calc(100% - 50px); height: 20px; }",
+        /*viewport=*/200.0f); // Ширина вьюпорта 200px
+
+    // Ожидаем ширину 150px
+    LayoutNode* body = child_of_type(p.root.get(), BoxType::Block);
+    LayoutNode* div = child_of_type(body, BoxType::Block);
+    REQUIRE(div->geometry.width == Approx(150.0f).epsilon(0.01));
+}
+
+// ============================================================
+//  Тесты для CSS Grid
+// ============================================================
+
+TEST_CASE("Grid: basic 1fr 1fr layout", "[layout][grid]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div id='grid'><p id='a'></p><p id='b'></p></div>",
+        "#grid { display: grid; grid-template-columns: 1fr 1fr; width: 100px; } "
+        "#a { background: red; height: 10px; } "
+        "#b { background: blue; height: 10px; }");
+
+    LayoutNode* grid = find_by_soa_idx(p.root.get(), 2);
+    LayoutNode* a = find_by_soa_idx(p.root.get(), 3);
+    LayoutNode* b = find_by_soa_idx(p.root.get(), 4);
+
+    REQUIRE(grid != nullptr);
+    REQUIRE(a != nullptr);
+    REQUIRE(b != nullptr);
+
+    // Две колонки по 50px
+    REQUIRE(a->geometry.width == Approx(50.0f).epsilon(0.01));
+    REQUIRE(b->geometry.width == Approx(50.0f).epsilon(0.01));
+
+    // 'a' слева, 'b' справа
+    REQUIRE(a->geometry.x == Approx(0.0f).epsilon(0.01));
+    REQUIRE(b->geometry.x == Approx(50.0f).epsilon(0.01));
+}
+
+TEST_CASE("Grid: repeat(3, 1fr) and gap", "[layout][grid]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div id='grid'><p id='a'></p><p id='b'></p><p id='c'></p></div>",
+        "#grid { display: grid; grid-template-columns: repeat(3, 1fr); column-gap: 10px; width: 130px; } "
+        "#a, #b, #c { height: 10px; }");
+
+    LayoutNode* a = find_by_soa_idx(p.root.get(), 3);
+    LayoutNode* b = find_by_soa_idx(p.root.get(), 4);
+    LayoutNode* c = find_by_soa_idx(p.root.get(), 5);
+
+    // Ширина 130. Два гапа по 10px = 20px. Остается 110 / 3 = 36.66px на колонку.
+    float col_w = 110.0f / 3.0f;
+    REQUIRE(a->geometry.width == Approx(col_w).epsilon(0.1));
+    REQUIRE(b->geometry.width == Approx(col_w).epsilon(0.1));
+
+    REQUIRE(a->geometry.x == Approx(0.0f).epsilon(0.1));
+    REQUIRE(b->geometry.x == Approx(col_w + 10.0f).epsilon(0.1));
+    REQUIRE(c->geometry.x == Approx((col_w + 10.0f) * 2).epsilon(0.1));
+}
+
+TEST_CASE("Grid: span 2 columns", "[layout][grid]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div id='grid'><p id='a'></p><p id='b'></p></div>",
+        "#grid { display: grid; grid-template-columns: 1fr 1fr; width: 100px; } "
+        "#a { grid-column: span 2; height: 10px; } "
+        "#b { height: 10px; }");
+
+    LayoutNode* a = find_by_soa_idx(p.root.get(), 3);
+    LayoutNode* b = find_by_soa_idx(p.root.get(), 4);
+
+    // 'a' должен занять всю ширину (100px)
+    REQUIRE(a->geometry.width == Approx(100.0f).epsilon(0.01));
+
+    // 'b' переносится на вторую строку
+    REQUIRE(b->geometry.y == Approx(10.0f).epsilon(0.01));
+}
+
+TEST_CASE("Grid: px and 1fr mix", "[layout][grid]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div id='grid'><p id='a'></p><p id='b'></p></div>",
+        "#grid { display: grid; grid-template-columns: 50px 1fr; width: 150px; } "
+        "#a, #b { height: 10px; }");
+
+    LayoutNode* a = find_by_soa_idx(p.root.get(), 3);
+    LayoutNode* b = find_by_soa_idx(p.root.get(), 4);
+
+    REQUIRE(a->geometry.width == Approx(50.0f).epsilon(0.01));
+    REQUIRE(b->geometry.width == Approx(100.0f).epsilon(0.01));
+}
