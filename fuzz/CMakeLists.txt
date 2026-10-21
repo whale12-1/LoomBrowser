@@ -2,7 +2,6 @@ cmake_minimum_required(VERSION 3.20)
 
 # ============================================================
 #  Принудительно используем Clang: libFuzzer есть только у него.
-#  ВАЖНО: устанавливается ДО project(), иначе CMake возьмёт GCC.
 # ============================================================
 if(NOT DEFINED CMAKE_C_COMPILER)
     set(CMAKE_C_COMPILER clang CACHE STRING "" FORCE)
@@ -23,21 +22,26 @@ if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 
 # ============================================================
+#  Находим Qt (нужен для display_list_builder.h)
+# ============================================================
+find_package(Qt6 REQUIRED COMPONENTS Core Gui)
+
+# ============================================================
 #  Корень репозитория — на уровень выше папки fuzz/.
 # ============================================================
 get_filename_component(REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
 
 # ============================================================
-#  Ядро для фаззеров — парсеры + style + layout, без Qt.
+#  Ядро для фаззеров
 # ============================================================
 set(FUZZ_COMMON_SOURCES "")
-    foreach(_cand
-            ${REPO_ROOT}/src/parsers/html_parser/html_parser.cpp
-            ${REPO_ROOT}/src/parsers/css_parser/css_parser.cpp
-            ${REPO_ROOT}/src/parsers/selector_matcher/selector_matcher.cpp
-            ${REPO_ROOT}/src/parsers/selector_matcher/style_properties.cpp
-            ${REPO_ROOT}/src/layout/layout_tree_builder.cpp
-            ${REPO_ROOT}/src/parsers/selector_matcher/display_list_builder.cpp)
+foreach(_cand
+        ${REPO_ROOT}/src/parsers/html_parser/html_parser.cpp
+        ${REPO_ROOT}/src/parsers/css_parser/css_parser.cpp
+        ${REPO_ROOT}/src/parsers/selector_matcher/selector_matcher.cpp
+        ${REPO_ROOT}/src/parsers/selector_matcher/style_properties.cpp
+        ${REPO_ROOT}/src/layout/layout_tree_builder.cpp
+        ${REPO_ROOT}/src/parsers/selector_matcher/display_list_builder.cpp)
     if(EXISTS "${_cand}")
         list(APPEND FUZZ_COMMON_SOURCES "${_cand}")
     endif()
@@ -45,8 +49,11 @@ endforeach()
 
 if(FUZZ_COMMON_SOURCES)
     add_library(tb_fuzz_core STATIC ${FUZZ_COMMON_SOURCES})
+    # Линкуем Qt к ядру
+    target_link_libraries(tb_fuzz_core PUBLIC Qt6::Core Qt6::Gui)
 else()
     add_library(tb_fuzz_core INTERFACE)
+    target_link_libraries(tb_fuzz_core INTERFACE Qt6::Core Qt6::Gui)
 endif()
 
 target_include_directories(tb_fuzz_core INTERFACE
@@ -82,6 +89,7 @@ function(add_fuzz_target name source)
     target_link_options(${name} PRIVATE
         -fsanitize=fuzzer,address,undefined)
 endfunction()
+
 
 add_fuzz_target(fuzz_html         fuzz_html.cpp)
 add_fuzz_target(fuzz_css          fuzz_css.cpp)

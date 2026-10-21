@@ -37,7 +37,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         { sheet, Origin::Author }
     };
 
-    StyleStorageSoA storage = StyleTreeBuilder::build(doc, sources);
+    StyleStorageSoA storage = StyleTreeBuilder::build(doc, sources, 1024.0f, 768.0f);
     if (storage.size() == 0) return 0;
 
     auto layout = LayoutTreeBuilder::build(storage);
