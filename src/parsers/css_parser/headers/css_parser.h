@@ -626,11 +626,6 @@ private:
             }
         }
 
-        if (at.name == "media") {
-            qDebug() << "[CSS] Parsed @media block:" << QString::fromStdString(at.prelude)
-                << "Rules inside:" << at.rules.size();
-        }
-
         return at;
     }
 
