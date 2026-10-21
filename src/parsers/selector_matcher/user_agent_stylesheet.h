@@ -10,6 +10,7 @@ namespace ua_css {
 
 	inline constexpr const char* kSource = R"CSS(
 /* === ������� �������� �� ��������� === */
+html, body { background-color: #ffffff !important; color: #202122 !important; margin: 0; padding: 0; }
 html, body, div, p, h1, h2, h3, h4, h5, h6,
 article, section, header, footer, nav, main, aside,
 ul, ol, li, dl, dt, dd, pre, blockquote, figure, figcaption,
@@ -59,7 +60,6 @@ table { display: table; }
 thead, tbody, tfoot { display: block; }
 tr { display: table-row; }
 td, th { display: table-cell; padding: 1px; }
-html, body { background-color: white; color: black; }
 )CSS";
 
 } // namespace ua_css

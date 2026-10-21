@@ -260,7 +260,7 @@ int main(int argc, char** argv) {
         << " bytes of author CSS)...\n";
 
     // 3. Каскад
-    StyleStorageSoA storage = StyleTreeBuilder::build(root_elem, sources);
+    StyleStorageSoA storage = StyleTreeBuilder::build(root_elem, sources, 1024.0f, 768.0f);
 
 
     // 4. Layout

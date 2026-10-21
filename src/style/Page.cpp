@@ -14,6 +14,7 @@
 #include <QEventLoop>
 #include <QByteArray>
 #include <functional>
+#include <fstream>
 
 // ---- Вспомогательные обходы DOM ----
 namespace {
@@ -156,10 +157,19 @@ void Page::loadHtml(const std::string& html,
     document_ = firstElement(doc);
     if (!document_) return;
 
+
+    std::ofstream out("wikipedia_dump.html");
+    out << html;
+    out.close();
+    qDebug() << "[Page] HTML dumped to wikipedia_dump.html. Size:" << html.size();
+
+
     // --- НОВОЕ: Загрузка внешних CSS ---
     if (fetch_resource && !base_url.empty()) {
         std::vector<DOMNode*> links;
         collect_link_tags(document_, links);
+        qDebug() << "[Page] Found <link> tags:" << links.size(); // Лог 1: сколько тегов нашли
+
         for (DOMNode* link : links) {
             std::string rel, href;
             for (const auto& kv : link->attributes) {
@@ -167,12 +177,11 @@ void Page::loadHtml(const std::string& html,
                 if (k == "rel") rel = kv.second;
                 if (k == "href") href = kv.second;
             }
-            if (rel == "stylesheet" && !href.empty()) {
-                qDebug() << "[Page] Found stylesheet link:" << QString::fromStdString(href);
+            qDebug() << "[Page] Link tag: rel=" << QString::fromStdString(rel) << " href=" << QString::fromStdString(href); // Лог 2: что внутри тега
 
-                // Вызываем функцию, которую нам передали извне
+            if (rel.find("stylesheet") != std::string::npos && !href.empty()) {
+                qDebug() << "[Page] Fetching CSS:" << QString::fromStdString(href);
                 std::string css = fetch_resource(href);
-
                 if (!css.empty()) {
                     external_css_ += css;
                     external_css_ += "\n";
@@ -258,7 +267,8 @@ void Page::rebuild() {
     // 2. Каскад в SoA.
     qDebug() << "Author CSS preview:" << QString::fromStdString(author_css.substr(0, 200));
 
-    storage_ = StyleTreeBuilder::build(document_, sources);
+    storage_ = StyleTreeBuilder::build(document_, sources, viewport_w_, viewport_h_);
+
 
 
     // 3. Layout с текстовыми метриками (Qt или эвристика).

@@ -3273,3 +3273,46 @@ TEST_CASE("Grid: px and 1fr mix", "[layout][grid]") {
     REQUIRE(a->geometry.width == Approx(50.0f).epsilon(0.01));
     REQUIRE(b->geometry.width == Approx(100.0f).epsilon(0.01));
 }
+
+
+TEST_CASE("Grid: explicit placement 1 / 3", "[layout][grid]") {
+    ArenaAllocator arena;
+    auto p = run_pipeline(arena,
+        "<div id='grid'><p id='a'></p><p id='b'></p></div>",
+        "#grid { display: grid; grid-template-columns: repeat(4, 1fr); width: 100px; } "
+        "#a { grid-column: 1 / 3; height: 10px; } " // Занять 1 и 2 колонку
+        "#b { grid-column: 3 / 5; height: 10px; } " // Занять 3 и 4 колонку
+    );
+
+    LayoutNode* a = find_by_soa_idx(p.root.get(), 3);
+    LayoutNode* b = find_by_soa_idx(p.root.get(), 4);
+
+    // Каждая колонка по 25px, значит span 2 = 50px
+    REQUIRE(a->geometry.width == Approx(50.0f).epsilon(0.01));
+    REQUIRE(a->geometry.x == Approx(0.0f).epsilon(0.01));
+
+    REQUIRE(b->geometry.width == Approx(50.0f).epsilon(0.01));
+    REQUIRE(b->geometry.x == Approx(50.0f).epsilon(0.01));
+}
+
+TEST_CASE("Grid: repeat(auto-fill, minmax(50px, 1fr))", "[layout][grid]") {
+    ArenaAllocator arena;
+    // Ширина 120px. minmax 50px. С учетом gap 10px: 
+    // 50 + 10 + 50 = 110 (влезает 2 колонки). 3-я не влезет (50*3 + 20 = 170 > 120)
+    auto p = run_pipeline(arena,
+        "<div id='grid'><p></p><p></p><p></p></div>",
+        "#grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(50px, 1fr)); column-gap: 10px; width: 120px; } "
+        "p { height: 10px; }"
+    );
+
+    // Первые два элемента в первой строке, третий переносится
+    LayoutNode* p1 = find_by_soa_idx(p.root.get(), 3);
+    LayoutNode* p2 = find_by_soa_idx(p.root.get(), 4);
+    LayoutNode* p3 = find_by_soa_idx(p.root.get(), 5);
+
+    REQUIRE(p1->geometry.y == Approx(0.0f).epsilon(0.01));
+    REQUIRE(p2->geometry.y == Approx(0.0f).epsilon(0.01));
+
+    // p3 должен быть на второй строке (y = 10)
+    REQUIRE(p3->geometry.y == Approx(10.0f).epsilon(0.01));
+}

@@ -40,8 +40,7 @@ public:
     };
 
     struct Entry {
-        uint32_t    sheet_index = 0;
-        uint32_t    rule_index = 0;
+        const CSSRule* rule = nullptr; // <--- Теперь храним указатель
         uint32_t    selector_index = 0;
         Specificity spec;
         uint32_t    order = 0;
@@ -54,7 +53,52 @@ public:
         sheets_.push_back({ &sheet, Origin::Author });
     }
 
-    void build(const std::vector<SheetRef>& sheets) {
+    // Оценка медиа-запросов
+    static bool matches_media(const std::string& prelude, float vw, float vh) {
+
+        if (prelude.find("prefers-color-scheme:dark") != std::string::npos) {
+            return false;
+        }
+
+        if (prelude.empty() || prelude == "all" || prelude == "screen") return true;
+        if (prelude.find("print") != std::string::npos) return false;
+        if (prelude.find("prefers-color-scheme: dark") != std::string::npos) return false; // Мы в светлой теме
+
+        auto extract_px = [](const std::string& s, const std::string& key) -> float {
+            size_t pos = s.find(key);
+            if (pos == std::string::npos) return -1.0f;
+            pos += key.length();
+            while (pos < s.size() && (std::isspace(s[pos]) || s[pos] == ':')) ++pos;
+            size_t end = pos;
+            while (end < s.size() && (std::isdigit(s[end]) || s[end] == '.')) ++end;
+            if (end > pos) {
+                try { return std::stof(s.substr(pos, end - pos)); }
+                catch (...) {}
+            }
+            return -1.0f;
+            };
+
+        float min_w = extract_px(prelude, "min-width");
+        if (min_w >= 0.0f && vw < min_w) return false;
+
+        float max_w = extract_px(prelude, "max-width");
+        if (max_w >= 0.0f && vw > max_w) return false;
+
+        float min_h = extract_px(prelude, "min-height");
+        if (min_h >= 0.0f && vh < min_h) return false;
+
+        float max_h = extract_px(prelude, "max-height");
+        if (max_h >= 0.0f && vh > max_h) return false;
+
+        if (prelude.find("min-width") != std::string::npos) {
+            qDebug() << "[MEDIA] Prelude:" << QString::fromStdString(prelude)
+                << "Viewport_W:" << vw;
+        }
+
+        return true;
+    }
+
+    void build(const std::vector<SheetRef>& sheets, float vw, float vh) {
         id_buckets_.clear();
         class_buckets_.clear();
         tag_buckets_.clear();
@@ -62,27 +106,30 @@ public:
         entries_.clear();
 
         sheets_ = sheets;
-
-        size_t total = 0;
-        for (const auto& s : sheets_)
-            for (const auto& r : s.sheet->rules)
-                total += r.selectors.size();
-        entries_.reserve(total);
-
         uint32_t order = 0;
+
         for (uint32_t shi = 0; shi < sheets_.size(); ++shi) {
             const StyleSheet& sh = *sheets_[shi].sheet;
             const Origin org = sheets_[shi].origin;
 
-            for (uint32_t ri = 0; ri < sh.rules.size(); ++ri) {
-                const CSSRule& rule = sh.rules[ri];
+            // Вспомогательная лямбда для добавления правил
+            auto process_rule = [&](const CSSRule& rule) {
                 for (uint32_t si = 0; si < rule.selectors.size(); ++si) {
                     const ComplexSelector& sel = rule.selectors[si];
                     if (sel.compounds.empty()) continue;
 
+                    // ЛОГ: ищем правила display: grid или flex
+                    for (const auto& decl : rule.declarations) {
+                        if (decl.property == "display" && (decl.value == "grid" || decl.value == "flex")) {
+                            qDebug() << "[CSS FOUND] display:" << QString::fromStdString(decl.value)
+                                << " on selector:";
+                            css_debug::print_selector(sel);
+                            qDebug() << ""; // Перенос строки
+                        }
+                    }
+
                     Entry e;
-                    e.sheet_index = shi;
-                    e.rule_index = ri;
+                    e.rule = &rule; // ВАЖНО: используем указатель
                     e.selector_index = si;
                     e.spec = SelectorMatcher::compute_specificity(sel);
                     e.order = order++;
@@ -92,113 +139,83 @@ public:
                     entries_.push_back(e);
                     index_entry(eidx, sel);
                 }
+                };
+
+            // 1. Обычные правила
+            for (const auto& r : sh.rules) process_rule(r);
+
+            // 2. Правила из @media
+            for (const auto& at : sh.at_rules) {
+                if (at.name == "media" && matches_media(at.prelude, vw, vh)) {
+                    for (const auto& r : at.rules) {
+                        // ЛОГ: смотрим, какие селекторы лежат в медиа-запросе
+                        if (!r.selectors.empty()) {
+                            css_debug::print_selector(r.selectors[0]);
+                            // Если видим ".lang-list", значит правило найдено
+                        }
+                        process_rule(r);
+                    }
+                }
             }
         }
     }
 
-    void build() {
-        if (!sheets_.empty()) build(sheets_);
-    }
-
-    // ============================================================
-    //  Сбор matched entries для узла.
-    //  ВАЖНО: attributes в DOMNode — это std::pmr::unordered_map,
-    //  поэтому обычный find(std::string_view) не компилируется.
-    //  Итерируем вручную (attributes малы) и берём значения как string_view.
-    // ============================================================
     void collect(const DOMNode* node, std::vector<uint32_t>& out) const {
+        // ... (остается без изменений)
         using std::string_view;
-
         string_view id_val;
         string_view cls_val;
         bool has_id = false;
 
         for (const auto& kv : node->attributes) {
             string_view k(kv.first.data(), kv.first.size());
-            if (k == "id") {
-                id_val = string_view(kv.second.data(), kv.second.size());
-                has_id = true;
-            }
-            else if (k == "class") {
-                cls_val = string_view(kv.second.data(), kv.second.size());
-            }
+            if (k == "id") { id_val = string_view(kv.second.data(), kv.second.size()); has_id = true; }
+            else if (k == "class") { cls_val = string_view(kv.second.data(), kv.second.size()); }
         }
 
         if (has_id) {
             auto b = id_buckets_.find(id_val);
-            if (b != id_buckets_.end())
-                out.insert(out.end(), b->second.begin(), b->second.end());
+            if (b != id_buckets_.end()) out.insert(out.end(), b->second.begin(), b->second.end());
         }
-
-        // class может содержать несколько токенов через пробелы
-        {
-            size_t i = 0, n = cls_val.size();
-            while (i < n) {
-                while (i < n && std::isspace((unsigned char)cls_val[i])) ++i;
-                size_t st = i;
-                while (i < n && !std::isspace((unsigned char)cls_val[i])) ++i;
-                if (i > st) {
-                    auto b = class_buckets_.find(cls_val.substr(st, i - st));
-                    if (b != class_buckets_.end())
-                        out.insert(out.end(), b->second.begin(), b->second.end());
-                }
+        size_t i = 0, n = cls_val.size();
+        while (i < n) {
+            while (i < n && std::isspace((unsigned char)cls_val[i])) ++i;
+            size_t st = i;
+            while (i < n && !std::isspace((unsigned char)cls_val[i])) ++i;
+            if (i > st) {
+                auto b = class_buckets_.find(cls_val.substr(st, i - st));
+                if (b != class_buckets_.end()) out.insert(out.end(), b->second.begin(), b->second.end());
             }
         }
-
-        {
-            string_view tag_sv(node->tag_name.data(), node->tag_name.size());
-            auto bt = tag_buckets_.find(tag_sv);
-            if (bt != tag_buckets_.end())
-                out.insert(out.end(), bt->second.begin(), bt->second.end());
-        }
+        string_view tag_sv(node->tag_name.data(), node->tag_name.size());
+        auto bt = tag_buckets_.find(tag_sv);
+        if (bt != tag_buckets_.end()) out.insert(out.end(), bt->second.begin(), bt->second.end());
 
         out.insert(out.end(), universal_bucket_.begin(), universal_bucket_.end());
     }
 
-    // --- Резолверы ---
     const Entry& entry(uint32_t eidx) const { return entries_[eidx]; }
-
-    const CSSRule& rule(const Entry& e) const {
-        return sheets_[e.sheet_index].sheet->rules[e.rule_index];
-    }
-    const CSSRule& rule(uint32_t sheet_idx, uint32_t rule_idx) const {
-        return sheets_[sheet_idx].sheet->rules[rule_idx];
-    }
-    const ComplexSelector& selector(const Entry& e) const {
-        return rule(e).selectors[e.selector_index];
-    }
-    const Declaration& declaration(const Entry& e, uint32_t di) const {
-        return rule(e).declarations[di];
-    }
+    const CSSRule& rule(const Entry& e) const { return *e.rule; }
+    const ComplexSelector& selector(const Entry& e) const { return e.rule->selectors[e.selector_index]; }
 
 private:
     void index_entry(uint32_t eidx, const ComplexSelector& sel) {
+        // ... (остается без изменений)
         const CompoundSelector& right = sel.compounds.back();
         bool indexed = false;
-
         for (const auto& s : right.parts) {
-            if (s.kind == SimpleSelector::Kind::Id) {
-                id_buckets_[s.name].push_back(eidx);
-                indexed = true; break;
-            }
+            if (s.kind == SimpleSelector::Kind::Id) { id_buckets_[s.name].push_back(eidx); indexed = true; break; }
         }
         if (!indexed) for (const auto& s : right.parts) {
-            if (s.kind == SimpleSelector::Kind::Class) {
-                class_buckets_[s.name].push_back(eidx);
-                indexed = true; break;
-            }
+            if (s.kind == SimpleSelector::Kind::Class) { class_buckets_[s.name].push_back(eidx); indexed = true; break; }
         }
         if (!indexed) for (const auto& s : right.parts) {
-            if (s.kind == SimpleSelector::Kind::Tag) {
-                tag_buckets_[s.name].push_back(eidx);
-                indexed = true; break;
-            }
+            if (s.kind == SimpleSelector::Kind::Tag) { tag_buckets_[s.name].push_back(eidx); indexed = true; break; }
         }
         if (!indexed) universal_bucket_.push_back(eidx);
     }
 
     std::vector<SheetRef> sheets_;
-
     std::unordered_map<std::string, std::vector<uint32_t>, SvHash, std::equal_to<>> id_buckets_;
     std::unordered_map<std::string, std::vector<uint32_t>, SvHash, std::equal_to<>> class_buckets_;
     std::unordered_map<std::string, std::vector<uint32_t>, SvHash, std::equal_to<>> tag_buckets_;
@@ -206,20 +223,22 @@ private:
     std::vector<Entry>    entries_;
 };
 
+
 // ============================================================
 //  Builder — логика без изменений.
 // ============================================================
 class StyleTreeBuilder {
 public:
     static StyleStorageSoA build(DOMNode* dom_root,
-        const std::vector<StyleRuleIndex::SheetRef>& sheets)
+        const std::vector<StyleRuleIndex::SheetRef>& sheets,
+        float viewport_w, float viewport_h) // <--- Добавили viewport
     {
         StyleStorageSoA storage;
         storage.dom_nodes.reserve(256);
         if (!dom_root) return storage;
 
         StyleRuleIndex index;
-        index.build(sheets);
+        index.build(sheets,viewport_w,viewport_h);
 
         std::vector<uint32_t> scratch;
         scratch.reserve(64);
@@ -231,7 +250,7 @@ public:
     static StyleStorageSoA build(DOMNode* dom_root, const StyleSheet& author_sheet) {
         return build(dom_root, std::vector<StyleRuleIndex::SheetRef>{
             { &author_sheet, Origin::Author }
-        });
+        }, 1024.0f, 768.0f);
     }
 
 private:
@@ -419,7 +438,12 @@ private:
         const std::string& v = d.value;
 
         switch (p) {
-        case Prop::Display:  storage.displays[idx] = parse_display(v);  break;
+        case Prop::Display:
+            storage.displays[idx] = parse_display(v);
+            if (v == "grid") {
+                qDebug() << "[STYLE] Applied display: grid to node idx" << idx;
+            }
+            break;
         case Prop::Position: storage.positions[idx] = parse_position(v); break;
         case Prop::Float:    storage.floats[idx] = parse_float(v);    break;
         case Prop::Clear: storage.clears[idx] = parse_clear(v); break;
@@ -920,6 +944,10 @@ private:
             {"olive", 0x808000FF}, {"lime", 0x00FF00FF}, {"aqua", 0x00FFFFFF},
             {"teal", 0x008080FF}, {"navy", 0x000080FF}, {"fuchsia", 0xFF00FFFF},
             {"purple", 0x800080FF}, {"orange", 0xFFA500FF}, {"transparent", 0x00000000},
+            // ДОБАВЬ ЭТИ:
+            {"lightblue", 0xADD8E6FF}, {"lightgray", 0xD3D3D3FF}, {"lightgrey", 0xD3D3D3FF},
+            {"darkgray", 0xA9A9A9FF}, {"darkgrey", 0xA9A9A9FF}, {"lightgreen", 0x90EE90FF},
+            {"pink", 0xFFC0CBFF}, {"brown", 0xA52A2AFF}
         };
         auto it = named.find(v);
         if (it != named.end()) return style::Color::unpack(it->second);

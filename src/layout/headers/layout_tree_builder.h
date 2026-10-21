@@ -2433,7 +2433,8 @@ private:
     {
         if (!node) return;
 
-        if (node->type == BoxType::Block && !is_flex_container(node, storage)) {
+        if (node->type == BoxType::Block && !is_flex_container(node, storage) && !is_grid_container(node, storage)) 
+        {
             const float content_top = node->geometry.y
                 + node->geometry.border_top + node->geometry.padding_top;
 

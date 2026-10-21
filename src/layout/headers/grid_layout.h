@@ -4,6 +4,7 @@
 #include <functional>
 #include <algorithm>
 #include <cmath>
+#include <QDebug>
 #include "layout_node.h"
 #include "../parsers/selector_matcher/style_storage_soa.h"
 
@@ -18,23 +19,23 @@ public:
         const uint32_t si = node->style_soa_idx;
         const float pb_h = node->geometry.padding_left + node->geometry.padding_right + node->geometry.border_left + node->geometry.border_right;
 
-        // 2. Парсим шаблон колонок
+        // 1. Парсим шаблон колонок
         std::string template_cols = (si != UINT32_MAX) ? storage.grid_template_columns[si] : "";
         if (template_cols.empty()) template_cols = "none";
 
         std::vector<float> col_widths = parse_tracks(template_cols, content_width, col_gap);
-
         if (col_widths.empty()) {
             col_widths.push_back(content_width);
         }
 
-        // 3. Раскладываем элементы (Auto-placement)
+        int num_cols = (int)col_widths.size();
+
+        // 2. Раскладываем элементы
         struct GridItem {
             LayoutNode* node;
             int r, c, rowspan, colspan;
         };
         std::vector<GridItem> items;
-        int num_cols = (int)col_widths.size();
 
         int cur_row = 0;
         int cur_col = 0;
@@ -44,12 +45,47 @@ public:
             if (child->style_soa_idx != UINT32_MAX && storage.positions[child->style_soa_idx] == style::Position::Absolute) continue;
 
             int colspan = 1, rowspan = 1;
-            std::string col_val = (child->style_soa_idx != UINT32_MAX) ? storage.grid_column[child->style_soa_idx] : "";
+            int explicit_col_start = -1, explicit_row_start = -1;
 
-            if (col_val.find("span") != std::string::npos) {
-                try { colspan = std::stoi(col_val.substr(col_val.find("span") + 4)); }
-                catch (...) {}
+            if (child->style_soa_idx != UINT32_MAX) {
+                std::string col_val = storage.grid_column[child->style_soa_idx];
+                std::string row_val = storage.grid_row[child->style_soa_idx];
+
+                if (col_val.find("span") != std::string::npos) {
+                    try { colspan = std::stoi(col_val.substr(col_val.find("span") + 4)); }
+                    catch (...) {}
+                }
+                else if (!col_val.empty()) {
+                    size_t slash = col_val.find('/');
+                    if (slash != std::string::npos) {
+                        try {
+                            explicit_col_start = std::stoi(col_val.substr(0, slash));
+                            int end = std::stoi(col_val.substr(slash + 1));
+                            colspan = end - explicit_col_start;
+                        }
+                        catch (...) {}
+                    }
+                }
+
+                if (row_val.find("span") != std::string::npos) {
+                    try { rowspan = std::stoi(row_val.substr(row_val.find("span") + 4)); }
+                    catch (...) {}
+                }
+                else if (!row_val.empty()) {
+                    size_t slash = row_val.find('/');
+                    if (slash != std::string::npos) {
+                        try {
+                            explicit_row_start = std::stoi(row_val.substr(0, slash));
+                            int end = std::stoi(row_val.substr(slash + 1));
+                            rowspan = end - explicit_row_start;
+                        }
+                        catch (...) {}
+                    }
+                }
             }
+
+            if (explicit_col_start >= 0) cur_col = explicit_col_start - 1;
+            if (explicit_row_start >= 0) cur_row = explicit_row_start - 1;
 
             while (true) {
                 if (cur_row >= (int)occupied.size()) occupied.resize(cur_row + 1);
@@ -58,6 +94,7 @@ public:
                 bool fits = true;
                 for (int r = 0; r < rowspan; ++r) {
                     for (int c = 0; c < colspan; ++c) {
+                        if (cur_col + c >= num_cols) { fits = false; break; }
                         if (cur_row + r >= (int)occupied.size()) occupied.resize(cur_row + r + 1);
                         if (cur_col + c >= (int)occupied[cur_row + r].size()) occupied[cur_row + r].resize(cur_col + c + 1, false);
                         if (occupied[cur_row + r][cur_col + c]) { fits = false; break; }
@@ -65,9 +102,15 @@ public:
                     if (!fits) break;
                 }
 
-                if (fits) break;
-                cur_col++;
-                if (cur_col >= num_cols) { cur_col = 0; cur_row++; }
+                if (fits && (explicit_col_start == -1 || cur_col == explicit_col_start - 1)) break;
+
+                if (explicit_col_start >= 0) {
+                    cur_row++;
+                }
+                else {
+                    cur_col++;
+                    if (cur_col >= num_cols) { cur_col = 0; cur_row++; }
+                }
             }
 
             for (int r = 0; r < rowspan; ++r) {
@@ -77,11 +120,14 @@ public:
             }
 
             items.push_back({ child.get(), cur_row, cur_col, rowspan, colspan });
-            cur_col += colspan;
-            if (cur_col >= num_cols) { cur_col = 0; cur_row++; }
+
+            if (explicit_col_start == -1) {
+                cur_col += colspan;
+                if (cur_col >= num_cols) { cur_col = 0; cur_row++; }
+            }
         }
 
-        // 4. Вычисляем высоты строк
+        // 3. Вычисляем высоты строк
         int total_rows = (int)occupied.size();
         std::vector<float> row_heights(total_rows, 0.0f);
 
@@ -98,7 +144,7 @@ public:
             row_heights[item.r] = std::max(row_heights[item.r], h);
         }
 
-        // 5. Финализируем позиции
+        // 4. Финализируем позиции
         float total_height = 0.0f;
         for (float h : row_heights) total_height += h;
         if (total_rows > 1) total_height += row_gap * (total_rows - 1);
@@ -122,6 +168,9 @@ public:
 
             layout_child_fn(item.node, item_x, item_y, item_w, item_h);
         }
+        qDebug() << "[GRID] Container width:" << content_width
+            << "template:" << QString::fromStdString(template_cols)
+            << "cols parsed:" << col_widths.size();
 
         node->geometry.width = pb_h + content_width;
         node->geometry.height = node->geometry.border_top + node->geometry.padding_top + total_height + node->geometry.padding_bottom + node->geometry.border_bottom;
@@ -129,9 +178,7 @@ public:
 
 private:
     static std::vector<float> parse_tracks(const std::string& tmpl, float width, float gap) {
-        std::string expanded = expand_repeat(tmpl, width);
-
-        // Разбиваем по пробелам (игнорируя пробелы внутри скобок)
+        std::string expanded = expand_repeat(tmpl, width, gap);
         std::vector<std::string> tokens;
         size_t i = 0;
         while (i < expanded.size()) {
@@ -162,7 +209,20 @@ private:
 
         for (size_t i = 0; i < tokens.size(); ++i) {
             std::string t = tokens[i];
-            if (t.find("fr") != std::string::npos) {
+
+            // ВАЖНО: Проверка minmax должна быть ПЕРВОЙ!
+            if (t.find("minmax(") == 0) {
+                if (t.find("1fr") != std::string::npos) {
+                    fr_sum += 1.0f;
+                    is_fr[i] = true;
+                }
+                else {
+                    // Пока считаем, что minmax с фиксированными значениями - это 150px
+                    sizes[i] = 150.0f;
+                    fixed_sum += 150.0f;
+                }
+            }
+            else if (t.find("fr") != std::string::npos) {
                 try { fr_sum += std::stof(t.substr(0, t.size() - 2)); }
                 catch (...) {}
                 is_fr[i] = true;
@@ -173,16 +233,8 @@ private:
                 fixed_sum += sizes[i];
             }
             else if (t == "auto") {
-                sizes[i] = 100.0f; // Базовый минимум для auto
+                sizes[i] = 100.0f;
                 fixed_sum += 100.0f;
-            }
-            else if (t.find("minmax(") == 0) {
-                if (t.find("1fr") != std::string::npos) {
-                    fr_sum += 1.0f; is_fr[i] = true;
-                }
-                else {
-                    sizes[i] = 150.0f; fixed_sum += 150.0f;
-                }
             }
         }
 
@@ -192,8 +244,12 @@ private:
             if (is_fr[i]) {
                 std::string t = tokens[i];
                 float val = 1.0f;
-                try { val = std::stof(t.substr(0, t.find("fr"))); }
-                catch (...) {}
+
+                // Если это minmax, то для нас это всегда 1fr (пока)
+                if (t.find("minmax(") != 0) {
+                    try { val = std::stof(t.substr(0, t.find("fr"))); }
+                    catch (...) {}
+                }
                 sizes[i] = val * fr_size;
             }
         }
@@ -217,7 +273,7 @@ private:
         return s.substr(b, e - b + 1);
     }
 
-    static std::string expand_repeat(const std::string& tmpl, int container_width) {
+    static std::string expand_repeat(const std::string& tmpl, float width, float gap) {
         std::string result;
         size_t pos = 0;
         while (pos < tmpl.size()) {
@@ -238,7 +294,20 @@ private:
 
                 int count = 1;
                 if (count_str == "auto-fill" || count_str == "auto-fit") {
-                    count = 4; // Заглушка
+                    float min_w = 150.0f; // Дефолт
+                    if (track_str.find("minmax(") == 0) {
+                        size_t c2 = track_str.find(',');
+                        if (c2 != std::string::npos) {
+                            std::string min_str = trim(track_str.substr(7, c2 - 7));
+                            // Надежный парсинг: ищем "px" и берем число перед ним
+                            size_t px_pos = min_str.find("px");
+                            if (px_pos != std::string::npos) {
+                                try { min_w = std::stof(min_str.substr(0, px_pos)); }
+                                catch (...) {}
+                            }
+                        }
+                    }
+                    count = std::max(1, (int)((width + gap) / (min_w + gap)));
                 }
                 else {
                     try { count = std::stoi(count_str); }

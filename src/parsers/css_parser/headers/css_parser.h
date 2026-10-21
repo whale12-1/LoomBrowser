@@ -296,8 +296,11 @@ private:
 
         if (!match('{')) {
             report_error("Expected '{' after selectors");
-            while (!eof() && peek() != '{' && peek() != '}') ++pos_;
+            // Если мы встретили @ или }, значит селектор был битым, 
+            // сбрасываемся до ближайшей скобки
+            while (!eof() && peek() != '{' && peek() != '}' && peek() != '@') ++pos_;
             if (peek() == '{') ++pos_;
+            else return rule;
         }
         parse_block_contents(rule.declarations, rule.nested_at_rules);
         return rule;
@@ -325,7 +328,7 @@ private:
 
         while (!eof()) {
             char c = peek();
-            if (c == '{' || c == ',') break;
+            if (c == '{' || c == ',' || c == '@') break;
 
             if (is_ws(c)) {
                 skip_ws_and_comments();
@@ -364,7 +367,7 @@ private:
         size_t start_pos = pos_;
         while (!eof()) {
             char c = peek();
-            if (is_ws(c) || c == '{' || c == ',' || c == '>' || c == '+' || c == '~') break;
+            if (is_ws(c) || c == '{' || c == ',' || c == '>' || c == '+' || c == '~' || c == '@') break;
 
             SimpleSelector s;
             if (c == '*') {
@@ -622,6 +625,12 @@ private:
                 else               at.rules.push_back(parse_qualified_rule());
             }
         }
+
+        if (at.name == "media") {
+            qDebug() << "[CSS] Parsed @media block:" << QString::fromStdString(at.prelude)
+                << "Rules inside:" << at.rules.size();
+        }
+
         return at;
     }
 

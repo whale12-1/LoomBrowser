@@ -3,17 +3,34 @@
 <head>
     <style>
         body {
-            font-family: Verdana, sans-serif;
-            font-size: 14px;
+            background: white;
+            margin: 20px;
         }
 
-        h1 {
-            font-family: "Courier New", monospace;
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 10px;
+            width: 800px;
+            background: #eee;
+            padding: 10px;
+        }
+
+        .item {
+            background: lightblue;
+            height: 50px;
+            border: 1px solid blue;
         }
     </style>
 </head>
 <body>
-    <h1>Monospace Heading</h1>
-    <p>This text should be in Verdana. If you see a different font than the heading, the font engine works!</p>
+    <div class="grid">
+        <div class="item">1</div>
+        <div class="item">2</div>
+        <div class="item">3</div>
+        <div class="item">4</div>
+        <div class="item">5</div>
+        <div class="item">6</div>
+    </div>
 </body>
 </html>

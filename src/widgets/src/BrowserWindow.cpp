@@ -189,16 +189,16 @@ void BrowserWindow::onHttpResponse(const net::HttpResponse& resp) {
 
     // Лямбда, которая скачивает CSS
     auto fetch_resource = [base_url](const std::string& href) -> std::string {
-        // Используем QUrl для правильного разрешения относительных путей (например, news.css)
         QUrl base_qurl(QString::fromStdString(base_url));
         QUrl abs_qurl = base_qurl.resolved(QUrl(QString::fromStdString(href)));
         std::string abs_url = abs_qurl.toString().toStdString();
 
         qDebug() << "[CSS] Fetching:" << QString::fromStdString(abs_url);
 
-        static QNetworkAccessManager nam;
+        // Создаем локальный менеджер, чтобы избежать конфликтов
+        QNetworkAccessManager nam;
         QNetworkRequest req(QUrl(QString::fromStdString(abs_url)));
-        req.setHeader(QNetworkRequest::UserAgentHeader, "Mozilla/5.0");
+        req.setHeader(QNetworkRequest::UserAgentHeader, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
 
         QNetworkReply* reply = nam.get(req);
         QEventLoop loop;
@@ -207,8 +207,8 @@ void BrowserWindow::onHttpResponse(const net::HttpResponse& resp) {
 
         if (reply->error() == QNetworkReply::NoError) {
             QByteArray data = reply->readAll();
-            reply->deleteLater();
             qDebug() << "[CSS] Downloaded bytes:" << data.size();
+            reply->deleteLater();
             return std::string(data.constData(), data.size());
         }
 
@@ -221,7 +221,7 @@ void BrowserWindow::onHttpResponse(const net::HttpResponse& resp) {
     // Лямбда для асинхронной загрузки картинок
     auto fetch_image_async = [this](const std::string& url, std::function<void(QImage)> on_loaded) {
         QNetworkRequest req(QUrl(QString::fromStdString(url)));
-        req.setHeader(QNetworkRequest::UserAgentHeader, "Mozilla/5.0");
+        req.setHeader(QNetworkRequest::UserAgentHeader, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
         QNetworkReply* reply = net_manager_->get(req);
 
         QObject::connect(reply, &QNetworkReply::finished, [reply, on_loaded, url]() {
