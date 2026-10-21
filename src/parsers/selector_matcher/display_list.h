@@ -3,7 +3,9 @@
 #include <string>
 #include <vector>
 #include <memory>
-#include <QImage>
+
+
+class QImage;
 
 enum class DisplayItemType : uint8_t {
     Rect,   // background / border

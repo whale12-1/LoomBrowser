@@ -173,26 +173,15 @@ private:
 
             // --- background-color ---
             const uint32_t bg = storage.background_colors[si];
-            if ((bg & 0xFFu) != 0u) {
-                // Проверяем, есть ли у элемента содержимое (дети, текст или картинка)
-                bool has_content = !node->children.empty()
-                    || !node->text_content.empty()
-                    || !node->image_src.empty();
-
-                // Рисуем фон, только если элемент не пустой 
-                // (или это картинка/таблица)
-                if (has_content || node->type == BoxType::Image ||
-                    node->type == BoxType::Table || node->type == BoxType::TableCell)
-                {
-                    DisplayItem it;
-                    it.type = DisplayItemType::Rect;
-                    it.x = ax; it.y = ay; it.width = w; it.height = h;
-                    it.color = bg;
-                    it.opacity = item_opacity;
-                    fill_radius(it, node, storage, w, h);
-                    fill_clip(it, has_clip, clip_x, clip_y, clip_w, clip_h);
-                    out.items.push_back(std::move(it));
-                }
+            if ((bg & 0xFFu) != 0u && w > 0.0f && h > 0.0f) {
+                DisplayItem it;
+                it.type = DisplayItemType::Rect;
+                it.x = ax; it.y = ay; it.width = w; it.height = h;
+                it.color = bg;
+                it.opacity = item_opacity;
+                fill_radius(it, node, storage, w, h);
+                fill_clip(it, has_clip, clip_x, clip_y, clip_w, clip_h);
+                out.items.push_back(std::move(it));
             }
 
             // --- background-image ---

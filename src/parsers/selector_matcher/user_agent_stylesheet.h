@@ -60,6 +60,15 @@ table { display: table; }
 thead, tbody, tfoot { display: block; }
 tr { display: table-row; }
 td, th { display: table-cell; padding: 1px; }
+dialog:not([open]) { display: none; }
+.screen-reader-text {
+    position: absolute !important;
+    width: 1px; height: 1px;
+    padding: 0; margin: -1px; overflow: hidden;
+    clip: rect(0,0,0,0);
+    white-space: nowrap; border: 0;
+}
+.styled-select { display: none !important; }
 )CSS";
 
 } // namespace ua_css

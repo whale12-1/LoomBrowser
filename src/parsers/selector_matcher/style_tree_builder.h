@@ -843,48 +843,119 @@ private:
         }
     }
     // =================================================================
-//  background-image: url(...) | none
+// =================================================================
+//  background-image: url(...) | none | <layer> [, <layer>]*
 //
-//  Поддерживаем три формы: url(path), url('path'), url("path").
-//  Возвращает путь без кавычек или "" для none / синтаксической
-//  ошибки. Сложные значения (градиенты, несколько фонов через
-//  запятую) пока не парсим — TODO.
+//  CSS background-image — стек слоёв через запятую. Первый слой
+//  рисуется сверху, последний — снизу. Градиенты мы пока не умеем
+//  рендерить, поэтому:
+//
+//    * если в значении есть url(...) — берём ПОСЛЕДНИЙ (нижний слой,
+//      который иначе оказался бы скрыт под прозрачным градиентом);
+//    * если url нет (только градиенты) — возвращаем "".
+//
+//  Поддерживаем url(path), url('path'), url("path"), а также url с
+//  пробелами вокруг содержимого. Учитываем вложенные скобки
+//  (linear-gradient(rgba(0,0,0,.5), transparent)) и строковые
+//  литералы, чтобы не спутать url( внутри строки или не обрезать
+//  парную ')' по первому же вхождению.
 // =================================================================
     static std::string parse_url(const std::string& v) {
+        // Trim outer whitespace.
         size_t b = 0, e = v.size();
         while (b < e && std::isspace((unsigned char)v[b])) ++b;
         while (e > b && std::isspace((unsigned char)v[e - 1])) --e;
-        if (b == e) return "";
-        std::string s = v.substr(b, e - b);
+        if (b >= e) return "";
 
-        if (s == "none") return "";
+        const char* s = v.data();
+        const size_t n = e - b;
+        const char* p = s + b;
 
-        // Case-insensitive "url("
-        if (s.size() < 5) return "";
-        const char c0 = (char)std::tolower((unsigned char)s[0]);
-        const char c1 = (char)std::tolower((unsigned char)s[1]);
-        const char c2 = (char)std::tolower((unsigned char)s[2]);
-        if (c0 != 'u' || c1 != 'r' || c2 != 'l' || s[3] != '(') return "";
+        size_t last_url_start = std::string::npos;
+        size_t last_url_end = std::string::npos;
 
-        const size_t close = s.rfind(')');
-        if (close == std::string::npos || close < 4) return "";
+        size_t i = 0;
+        while (i < n) {
+            const char c = p[i];
 
-        std::string inner = s.substr(4, close - 4);
+            // Пропускаем строковые литералы целиком — иначе можем
+            // найти "url(" внутри значения content: "...url(...)".
+            if (c == '"' || c == '\'') {
+                const char q = c;
+                ++i;
+                while (i < n && p[i] != q) {
+                    if (p[i] == '\\' && i + 1 < n) ++i;
+                    ++i;
+                }
+                if (i < n) ++i;   // закрывающая кавычка
+                continue;
+            }
 
-        // trim
-        b = 0; e = inner.size();
-        while (b < e && std::isspace((unsigned char)inner[b])) ++b;
-        while (e > b && std::isspace((unsigned char)inner[e - 1])) --e;
-        inner = inner.substr(b, e - b);
+            // Case-insensitive match "url(".
+            if (i + 4 <= n &&
+                (p[i] == 'u' || p[i] == 'U') &&
+                (p[i + 1] == 'r' || p[i + 1] == 'R') &&
+                (p[i + 2] == 'l' || p[i + 2] == 'L') &&
+                p[i + 3] == '(')
+            {
+                const size_t open = i + 3;  // позиция '('
+                size_t close = open + 1;    // первый символ после '('
+                int depth = 1;
 
-        // strip quotes
-        if (inner.size() >= 2) {
-            const char q = inner.front();
-            if ((q == '"' || q == '\'') && inner.back() == q) {
-                inner = inner.substr(1, inner.size() - 2);
+                // Ищем парную ')' с учётом вложенных скобок и строк
+                // внутри url(). Пример, где это важно:
+                //   url(foo(bar).png)  — вложенные () недопустимы по
+                //   спеке, но парсер должен дойти до правильной ')'.
+                while (close < n && depth > 0) {
+                    const char cc = p[close];
+                    if (cc == '"' || cc == '\'') {
+                        const char q = cc;
+                        ++close;
+                        while (close < n && p[close] != q) {
+                            if (p[close] == '\\' && close + 1 < n) ++close;
+                            ++close;
+                        }
+                        if (close < n) ++close;
+                        continue;
+                    }
+                    if (cc == '(') ++depth;
+                    else if (cc == ')') --depth;
+                    ++close;
+                }
+
+                if (depth != 0) {
+                    // Незакрытая url( — останавливаемся, дальше смысла
+                    // искать нет.
+                    break;
+                }
+
+                // close теперь указывает ЗА ')'.
+                last_url_start = open + 1;   // первый символ содержимого
+                last_url_end = close - 1;    // позиция самой ')'
+                i = close;
+                continue;
+            }
+
+            ++i;
+        }
+
+        if (last_url_start == std::string::npos) return "";
+
+        // Trim содержимого.
+        size_t ib = last_url_start, ie = last_url_end;
+        while (ib < ie && std::isspace((unsigned char)p[ib])) ++ib;
+        while (ie > ib && std::isspace((unsigned char)p[ie - 1])) --ie;
+
+        // Снимаем кавычки, если они обнимают весь путь.
+        if (ie - ib >= 2) {
+            const char q = p[ib];
+            if ((q == '"' || q == '\'') && p[ie - 1] == q) {
+                ++ib;
+                --ie;
             }
         }
-        return inner;
+
+        return std::string(p + ib, p + ie);
     }
 
     static style::Color parse_color(const std::string& v) {
