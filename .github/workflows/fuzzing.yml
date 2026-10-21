@@ -39,7 +39,8 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build clang
+          sudo apt-get install -y cmake ninja-build clang \
+            qt6-base-dev libqt6svg6-dev libgl1-mesa-dev
 
       - name: Configure CMake
         working-directory: fuzz
