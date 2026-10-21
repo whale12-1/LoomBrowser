@@ -4,6 +4,7 @@
 #include "style_storage_soa.h"
 #include <algorithm>
 #include <QUrl>
+#include <QImage>
 #include <QString>
 
 class DisplayListBuilder {
