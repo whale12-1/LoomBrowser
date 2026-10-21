@@ -90,11 +90,6 @@ public:
         float max_h = extract_px(prelude, "max-height");
         if (max_h >= 0.0f && vh > max_h) return false;
 
-        if (prelude.find("min-width") != std::string::npos) {
-            qDebug() << "[MEDIA] Prelude:" << QString::fromStdString(prelude)
-                << "Viewport_W:" << vw;
-        }
-
         return true;
     }
 
@@ -121,10 +116,7 @@ public:
                     // ЛОГ: ищем правила display: grid или flex
                     for (const auto& decl : rule.declarations) {
                         if (decl.property == "display" && (decl.value == "grid" || decl.value == "flex")) {
-                            qDebug() << "[CSS FOUND] display:" << QString::fromStdString(decl.value)
-                                << " on selector:";
                             css_debug::print_selector(sel);
-                            qDebug() << ""; // Перенос строки
                         }
                     }
 
@@ -440,9 +432,6 @@ private:
         switch (p) {
         case Prop::Display:
             storage.displays[idx] = parse_display(v);
-            if (v == "grid") {
-                qDebug() << "[STYLE] Applied display: grid to node idx" << idx;
-            }
             break;
         case Prop::Position: storage.positions[idx] = parse_position(v); break;
         case Prop::Float:    storage.floats[idx] = parse_float(v);    break;
